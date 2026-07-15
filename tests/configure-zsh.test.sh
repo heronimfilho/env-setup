@@ -2,6 +2,8 @@
 
 set -Eeuo pipefail
 
+unset ZSH ZSH_CUSTOM MOCK_GIT_FAIL
+
 readonly PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly TEMP_ROOT="$(mktemp -d)"
 
@@ -108,6 +110,20 @@ EOF
   chmod +x "${mock_bin}"/*
 }
 
+run_setup() {
+  local mock_bin="$1"
+  local home="$2"
+  local git_fail="${3:-0}"
+
+  env \
+    -u ZSH \
+    -u ZSH_CUSTOM \
+    PATH="${mock_bin}:${PATH}" \
+    HOME="${home}" \
+    MOCK_GIT_FAIL="${git_fail}" \
+    bash "${PROJECT_ROOT}/configure-zsh.sh"
+}
+
 assert_line_count() {
   local expected="$1"
   local pattern="$2"
@@ -127,14 +143,12 @@ test_idempotent_configuration() {
   local mock_bin="${test_root}/bin"
   local home="${test_root}/home"
 
+  echo "Testing repeatable configuration..."
   mkdir -p "${home}"
   create_mocks "${mock_bin}"
 
-  PATH="${mock_bin}:${PATH}" HOME="${home}" \
-    bash "${PROJECT_ROOT}/configure-zsh.sh"
-
-  PATH="${mock_bin}:${PATH}" HOME="${home}" \
-    bash "${PROJECT_ROOT}/configure-zsh.sh"
+  run_setup "${mock_bin}" "${home}"
+  run_setup "${mock_bin}" "${home}"
 
   assert_line_count 1 'ZSH_THEME="dracula"' "${home}/.zshrc"
   assert_line_count 1 \
@@ -149,11 +163,11 @@ test_git_failure_is_reported() {
   local mock_bin="${test_root}/bin"
   local home="${test_root}/home"
 
+  echo "Testing Git failure handling..."
   mkdir -p "${home}"
   create_mocks "${mock_bin}"
 
-  if PATH="${mock_bin}:${PATH}" HOME="${home}" MOCK_GIT_FAIL=1 \
-    bash "${PROJECT_ROOT}/configure-zsh.sh"; then
+  if run_setup "${mock_bin}" "${home}" 1; then
     echo "Expected the setup to fail when git clone fails." >&2
     exit 1
   fi
