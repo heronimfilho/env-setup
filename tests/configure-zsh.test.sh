@@ -1,0 +1,165 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+readonly PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+readonly TEMP_ROOT="$(mktemp -d)"
+
+cleanup() {
+  rm -rf "${TEMP_ROOT}"
+}
+
+trap cleanup EXIT
+
+create_mocks() {
+  local mock_bin="$1"
+
+  mkdir -p "${mock_bin}"
+
+  cat > "${mock_bin}/sudo" <<'EOF'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+if [[ "${1:-}" == "-v" ]]; then
+  exit 0
+fi
+
+if [[ "${1:-}" == "env" ]]; then
+  shift
+  while [[ "${1:-}" == *=* ]]; do
+    shift
+  done
+fi
+
+exec "$@"
+EOF
+
+  cat > "${mock_bin}/apt-get" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+
+  cat > "${mock_bin}/curl" <<'EOF'
+#!/usr/bin/env bash
+cat <<'INSTALLER'
+set -Eeuo pipefail
+mkdir -p \
+  "${HOME}/.oh-my-zsh/custom/plugins" \
+  "${HOME}/.oh-my-zsh/custom/themes" \
+  "${HOME}/.oh-my-zsh/templates"
+touch "${HOME}/.oh-my-zsh/oh-my-zsh.sh"
+cat > "${HOME}/.oh-my-zsh/templates/zshrc.zsh-template" <<'ZSHRC'
+ZSH_THEME="robbyrussell"
+plugins=(git)
+ZSHRC
+INSTALLER
+EOF
+
+  cat > "${mock_bin}/git" <<'EOF'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+if [[ "${MOCK_GIT_FAIL:-0}" == "1" ]]; then
+  exit 42
+fi
+
+if [[ "${1:-}" == "-C" ]]; then
+  exit 0
+fi
+
+if [[ "${1:-}" == "clone" ]]; then
+  target="${@: -1}"
+  mkdir -p "${target}/.git"
+
+  if [[ "${target}" == */themes/dracula ]]; then
+    touch "${target}/dracula.zsh-theme"
+  fi
+
+  exit 0
+fi
+
+exit 1
+EOF
+
+  cat > "${mock_bin}/id" <<'EOF'
+#!/usr/bin/env bash
+case "${1:-}" in
+  -u) printf '1000\n' ;;
+  -un) printf 'developer\n' ;;
+  *) exit 1 ;;
+esac
+EOF
+
+  cat > "${mock_bin}/getent" <<'EOF'
+#!/usr/bin/env bash
+printf 'developer:x:1000:1000::%s:/bin/bash\n' "${HOME}"
+EOF
+
+  cat > "${mock_bin}/chsh" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+
+  cat > "${mock_bin}/zsh" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+
+  chmod +x "${mock_bin}"/*
+}
+
+assert_line_count() {
+  local expected="$1"
+  local pattern="$2"
+  local file="$3"
+  local actual
+
+  actual="$(grep -c -F "${pattern}" "${file}" || true)"
+
+  if [[ "${actual}" != "${expected}" ]]; then
+    echo "Expected ${expected} occurrence(s) of '${pattern}', found ${actual}." >&2
+    exit 1
+  fi
+}
+
+test_idempotent_configuration() {
+  local test_root="${TEMP_ROOT}/success"
+  local mock_bin="${test_root}/bin"
+  local home="${test_root}/home"
+
+  mkdir -p "${home}"
+  create_mocks "${mock_bin}"
+
+  PATH="${mock_bin}:${PATH}" HOME="${home}" \
+    bash "${PROJECT_ROOT}/configure-zsh.sh"
+
+  PATH="${mock_bin}:${PATH}" HOME="${home}" \
+    bash "${PROJECT_ROOT}/configure-zsh.sh"
+
+  assert_line_count 1 'ZSH_THEME="dracula"' "${home}/.zshrc"
+  assert_line_count 1 \
+    'plugins=(git sudo extract colored-man-pages zsh-autosuggestions zsh-syntax-highlighting)' \
+    "${home}/.zshrc"
+
+  test -L "${home}/.oh-my-zsh/custom/themes/dracula.zsh-theme"
+}
+
+test_git_failure_is_reported() {
+  local test_root="${TEMP_ROOT}/failure"
+  local mock_bin="${test_root}/bin"
+  local home="${test_root}/home"
+
+  mkdir -p "${home}"
+  create_mocks "${mock_bin}"
+
+  if PATH="${mock_bin}:${PATH}" HOME="${home}" MOCK_GIT_FAIL=1 \
+    bash "${PROJECT_ROOT}/configure-zsh.sh"; then
+    echo "Expected the setup to fail when git clone fails." >&2
+    exit 1
+  fi
+}
+
+test_idempotent_configuration
+test_git_failure_is_reported
+
+echo "configure-zsh tests passed."
