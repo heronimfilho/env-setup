@@ -44,7 +44,7 @@ EOF
   cat > "${mock_bin}/curl" <<'EOF'
 #!/usr/bin/env bash
 cat <<'INSTALLER'
-set -Eeuo pipefail
+set -eu
 mkdir -p \
   "${HOME}/.oh-my-zsh/custom/plugins" \
   "${HOME}/.oh-my-zsh/custom/themes" \
@@ -143,7 +143,6 @@ test_idempotent_configuration() {
   local mock_bin="${test_root}/bin"
   local home="${test_root}/home"
 
-  echo "Testing repeatable configuration..."
   mkdir -p "${home}"
   create_mocks "${mock_bin}"
 
@@ -163,7 +162,6 @@ test_git_failure_is_reported() {
   local mock_bin="${test_root}/bin"
   local home="${test_root}/home"
 
-  echo "Testing Git failure handling..."
   mkdir -p "${home}"
   create_mocks "${mock_bin}"
 
