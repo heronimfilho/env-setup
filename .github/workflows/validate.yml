@@ -47,22 +47,7 @@ jobs:
         run: bash -n configure-zsh.sh tests/configure-zsh.test.sh
 
       - name: Run Zsh setup tests
-        id: zsh-tests
-        continue-on-error: true
-        run: bash -x tests/configure-zsh.test.sh > zsh-test.log 2>&1
-
-      - name: Upload Zsh test log
-        if: steps.zsh-tests.outcome == 'failure'
-        uses: actions/upload-artifact@v4
-        with:
-          name: zsh-test-log
-          path: zsh-test.log
-
-      - name: Report Zsh test failure
-        if: steps.zsh-tests.outcome == 'failure'
-        run: |
-          cat zsh-test.log
-          exit 1
+        run: bash tests/configure-zsh.test.sh
 
       - name: Validate JSON
         run: python -m json.tool vscode.settings.json > /dev/null
