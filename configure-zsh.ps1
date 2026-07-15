@@ -1,121 +1,116 @@
+#requires -version 5.1
 
-# Installs zsh, oh-my-zsh, and configures with Dracula theme only
 [CmdletBinding()]
 param(
-    [ValidateSet("Ubuntu", "Ubuntu-22.04", "Ubuntu-20.04", "Debian", "kali-linux")]
+    [Parameter()]
+    [ValidateNotNullOrEmpty()]
     [string]$Distribution = "Ubuntu"
 )
 
-function Write-Status($Message) { Write-Host $Message -ForegroundColor Cyan }
-function Write-Success($Message) { Write-Host $Message -ForegroundColor Green }
-function Write-Error($Message) { Write-Host $Message -ForegroundColor Red }
+Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
 
-$installedDistros = wsl --list --quiet 2>$null
-$distroName = $Distribution.Replace("-", "")
-if (-not ($installedDistros -contains $distroName)) {
-    Write-Error "WSL distribution '$Distribution' not found. Run install-wsl.ps1 first."
-    exit 1
+function Write-Status {
+    param([string]$Message)
+    Write-Host $Message -ForegroundColor Cyan
 }
 
-Write-Status "Configuring zsh with Dracula theme for $Distribution..."
+function Write-Success {
+    param([string]$Message)
+    Write-Host $Message -ForegroundColor Green
+}
 
-# Create zsh installation script
-$zshScript = @'
-#!/bin/bash
+function Write-Failure {
+    param([string]$Message)
+    Write-Host $Message -ForegroundColor Red
+}
 
-echo "=== Starting Zsh + Dracula Theme Installation ==="
+function Get-InstalledDistributions {
+    $output = & wsl.exe --list --quiet 2>$null
 
-echo "## updating package lists##"
-sudo apt-get update
+    if ($LASTEXITCODE -ne 0) {
+        return @()
+    }
 
-echo "## installing zsh and dependencies ##"
-sudo apt-get install -y zsh curl
+    return @(
+        $output |
+            ForEach-Object { ($_ -replace "`0", "").Trim() } |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+    )
+}
 
-echo "## installing oh-my-zsh ##"
-if [ ! -d "$HOME/.oh-my-zsh" ]; then
-    export RUNZSH=no
-    export CHSH=no
-    sh -c "$(curl -fsSL https://raw.github.com/ohmyzsh/ohmyzsh/master/tools/install.sh)"
-    echo "oh-my-zsh installed successfully"
-else
-    echo "oh-my-zsh already installed"
-fi
+function Get-DistributionDefaultUid {
+    param([string]$DistributionName)
 
-echo "## verify oh-my-zsh installation ##"
-if [ ! -f "$HOME/.oh-my-zsh/oh-my-zsh.sh" ]; then
-    echo "ERROR: oh-my-zsh installation failed - missing oh-my-zsh.sh"
-    exit 1
-fi
+    $registryPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Lxss"
 
-echo "## installing Dracula theme ##"
-if [ ! -d "$HOME/.oh-my-zsh/themes/dracula" ]; then
-    git clone https://github.com/dracula/zsh.git "$HOME/.oh-my-zsh/themes/dracula"
-    ln -sf "$HOME/.oh-my-zsh/themes/dracula/dracula.zsh-theme" "$HOME/.oh-my-zsh/themes/dracula.zsh-theme"
-    echo "Dracula theme installed"
-else
-    echo "Dracula theme already exists"
-fi
+    if (-not (Test-Path -LiteralPath $registryPath)) {
+        return $null
+    }
 
-echo "## installing zsh plugins ##"
-[ ! -d "$HOME/.oh-my-zsh/custom/plugins/zsh-autosuggestions" ] && \
-    git clone --quiet https://github.com/zsh-users/zsh-autosuggestions "$HOME/.oh-my-zsh/custom/plugins/zsh-autosuggestions"
+    $distribution = Get-ChildItem -LiteralPath $registryPath |
+        ForEach-Object { Get-ItemProperty -LiteralPath $_.PSPath } |
+        Where-Object { $_.DistributionName -eq $DistributionName } |
+        Select-Object -First 1
 
-[ ! -d "$HOME/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting" ] && \
-    git clone --quiet https://github.com/zsh-users/zsh-syntax-highlighting.git "$HOME/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting"
- 
-echo "## add Dracula theme to .zshrc ##"
-if grep -q '^ZSH_THEME=' "$HOME/.zshrc"; then
-  sed -i 's|^ZSH_THEME=.*|ZSH_THEME="dracula"|' "$HOME/.zshrc"
-else
-  echo 'ZSH_THEME="dracula"' >> "$HOME/.zshrc"
-fi
+    if ($null -eq $distribution) {
+        return $null
+    }
 
-echo "## updating plugins ##"
-# sed -i 's/plugins=(git)/plugins=(git zsh-autosuggestions zsh-syntax-highlighting sudo extract colored-man-pages)/' "$HOME/.zshrc"
+    $defaultUidProperty = $distribution.PSObject.Properties["DefaultUid"]
 
-echo "setting zsh as default shell..."
-sudo chsh -s $(which zsh) $(whoami) >/dev/null 2>&1
+    if ($null -eq $defaultUidProperty) {
+        return $null
+    }
 
-echo "=== Configuration Summary ==="
-echo "Theme: $(grep '^ZSH_THEME=' $HOME/.zshrc)"
-echo "Plugins: $(grep '^plugins=' $HOME/.zshrc)"
-echo "=== Installation Complete ==="
-echo "Run 'exec zsh' or start a new terminal session to use Dracula theme"
-'@
+    return [uint32]$defaultUidProperty.Value
+}
 
 try {
+    $installedDistributions = Get-InstalledDistributions
 
-    Write-Status "installing zsh with Dracula theme..."
-    $scriptPath = "$env:TEMP\configure_zsh_dracula.sh"
-    
-    $zshScript = $zshScript -replace "`r`n", "`n"
-    [System.IO.File]::WriteAllText($scriptPath, $zshScript, [System.Text.UTF8Encoding]::new($false))
-
-    # convert Windows path to WSL path
-    $wslScriptPath = $scriptPath.Replace('\', '/').Replace('C:', '/mnt/c')
-    
-    $result = wsl -d $distroName bash -c "bash '$wslScriptPath'"
-    
-    if ($LASTEXITCODE -ne 0) {
-        Write-Error "Script execution failed with exit code $LASTEXITCODE"
-        Write-Host "Output: $result" -ForegroundColor Red
-        exit 1
+    if ($installedDistributions -notcontains $Distribution) {
+        throw "$Distribution is not installed. Run .\install-wsl.ps1 first."
     }
-    
-    Write-Success "Zsh with Dracula theme installation completed!"
-    Write-Host ""
-    Write-Host "Next steps:" -ForegroundColor Yellow
-    Write-Host "1. Restart WSL: wsl -d $distroName" -ForegroundColor White
-    Write-Host "2. Or run 'exec zsh' in your current terminal" -ForegroundColor White
-    Write-Host "3. The Dracula theme should now be active" -ForegroundColor White
+
+    $defaultUid = Get-DistributionDefaultUid -DistributionName $Distribution
+
+    if ($null -eq $defaultUid -or $defaultUid -eq 0) {
+        throw "Launch $Distribution once and finish creating a non-root Linux user."
+    }
+
+    $scriptPath = Join-Path $PSScriptRoot "configure-zsh.sh"
+
+    if (-not (Test-Path -LiteralPath $scriptPath -PathType Leaf)) {
+        throw "configure-zsh.sh was not found next to configure-zsh.ps1."
+    }
+
+    $defaultUserId = (& wsl.exe --distribution $Distribution --exec sh -c "id -u" 2>$null | Out-String).Trim()
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "Launch $Distribution once and finish creating the Linux user."
+    }
+
+    if ($defaultUserId -eq "0") {
+        throw "The default Linux user is root. Create or configure a non-root user first."
+    }
+
+    $wslScriptPath = (& wsl.exe --distribution $Distribution --exec wslpath -a -u $scriptPath | Out-String).Trim()
+
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($wslScriptPath)) {
+        throw "Could not convert the setup script path for WSL."
+    }
+
+    Write-Status "Configuring Zsh in $Distribution..."
+    & wsl.exe --distribution $Distribution --exec bash $wslScriptPath
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "Zsh configuration failed with exit code $LASTEXITCODE."
+    }
+
+    Write-Success "Zsh configuration completed."
 }
 catch {
-    Write-Error "Configuration failed: $($_.Exception.Message)"
+    Write-Failure $_.Exception.Message
     exit 1
-}
-finally {
-    # cleanup temp file
-    if (Test-Path $scriptPath) {
-        Remove-Item $scriptPath -Force
-    }
 }
