@@ -1,72 +1,126 @@
-# WSL Installer
-# Installs WSL2 with specified Linux distribution
+#requires -version 5.1
 
 [CmdletBinding()]
 param(
-    [ValidateSet("Ubuntu", "Ubuntu-22.04", "Ubuntu-20.04", "Debian", "kali-linux")]
-    [string]$Distribution = "Ubuntu"
+    [Parameter()]
+    [ValidateNotNullOrEmpty()]
+    [string]$Distribution = "Ubuntu",
+
+    [Parameter()]
+    [switch]$WebDownload
 )
 
-function Write-Status($Message) { Write-Host $Message -ForegroundColor Cyan }
-function Write-Success($Message) { Write-Host $Message -ForegroundColor Green }
-function Write-Error($Message) { Write-Host $Message -ForegroundColor Red }
+Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
 
-# Check administrator privileges
-if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-    Write-Error "Administrator privileges required. Run PowerShell as Administrator."
+function Write-Status {
+    param([string]$Message)
+    Write-Host $Message -ForegroundColor Cyan
+}
+
+function Write-Success {
+    param([string]$Message)
+    Write-Host $Message -ForegroundColor Green
+}
+
+function Write-Failure {
+    param([string]$Message)
+    Write-Host $Message -ForegroundColor Red
+}
+
+function Invoke-NativeCommand {
+    param(
+        [Parameter(Mandatory)]
+        [string]$FilePath,
+
+        [Parameter(Mandatory)]
+        [string[]]$Arguments,
+
+        [int[]]$SuccessExitCodes = @(0, 3010)
+    )
+
+    $output = & $FilePath @Arguments 2>&1
+    $exitCode = $LASTEXITCODE
+    $output | ForEach-Object { Write-Host $_ }
+
+    if ($SuccessExitCodes -notcontains $exitCode) {
+        throw "Command failed with exit code ${exitCode}: $FilePath $($Arguments -join ' ')"
+    }
+
+    return $exitCode
+}
+
+function Get-InstalledDistributions {
+    $output = & wsl.exe --list --quiet 2>$null
+
+    if ($LASTEXITCODE -ne 0) {
+        return @()
+    }
+
+    return @(
+        $output |
+            ForEach-Object { ($_ -replace "`0", "").Trim() } |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+    )
+}
+
+$principal = New-Object Security.Principal.WindowsPrincipal(
+    [Security.Principal.WindowsIdentity]::GetCurrent()
+)
+
+if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    Write-Failure "Run PowerShell as Administrator."
     exit 1
 }
 
-# Check Windows version
-$version = [System.Environment]::OSVersion.Version
-if ($version.Major -lt 10 -or ($version.Major -eq 10 -and $version.Build -lt 19041)) {
-    Write-Error "Windows 10 version 2004 (build 19041) or higher required."
+$build = [int](Get-ItemPropertyValue -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion" -Name "CurrentBuildNumber")
+
+if ($build -lt 19041) {
+    Write-Failure "Windows 10 build 19041 or newer is required."
     exit 1
 }
-
-Write-Status "Installing WSL2 with $Distribution..."
 
 try {
-    # Enable WSL features
-    $features = @("Microsoft-Windows-Subsystem-Linux", "VirtualMachinePlatform")
-    foreach ($feature in $features) {
-        $state = (Get-WindowsOptionalFeature -Online -FeatureName $feature).State
-        if ($state -ne "Enabled") {
-            Write-Status "Enabling $feature..."
-            Enable-WindowsOptionalFeature -Online -FeatureName $feature -NoRestart | Out-Null
-        }
+    $installedDistributions = Get-InstalledDistributions
+
+    if ($installedDistributions -contains $Distribution) {
+        Write-Status "$Distribution is already installed."
+        Invoke-NativeCommand -FilePath "wsl.exe" -Arguments @(
+            "--set-version",
+            $Distribution,
+            "2"
+        ) | Out-Null
+
+        Write-Success "$Distribution is configured to use WSL 2."
+        exit 0
     }
 
-    # Install WSL2 kernel update
-    $kernelUrl = "https://wslstorestorage.blob.core.windows.net/wslblob/wsl_update_x64.msi"
-    $kernelPath = "$env:TEMP\wsl_update_x64.msi"
-    
-    if (-not (Test-Path $kernelPath)) {
-        Write-Status "Downloading WSL2 kernel update..."
-        Invoke-WebRequest -Uri $kernelUrl -OutFile $kernelPath -UseBasicParsing
+    $arguments = @(
+        "--install",
+        "--distribution",
+        $Distribution,
+        "--no-launch"
+    )
+
+    if ($WebDownload) {
+        $arguments += "--web-download"
     }
-    
-    Start-Process msiexec.exe -Wait -ArgumentList "/i $kernelPath /quiet" -WindowStyle Hidden
 
-    # Set WSL2 as default
-    wsl --set-default-version 2 2>$null
+    Write-Status "Installing WSL 2 with $Distribution..."
+    $exitCode = Invoke-NativeCommand -FilePath "wsl.exe" -Arguments $arguments
 
-    # Install distribution
-    Write-Status "Installing $Distribution..."
-    wsl --install -d $Distribution --no-launch
+    Write-Success "WSL installation command completed."
+    Write-Host ""
+    Write-Host "Next:" -ForegroundColor Yellow
+    Write-Host "1. Restart Windows."
+    Write-Host "2. Launch $Distribution and create the Linux user."
+    Write-Host "3. Run .\configure-zsh.ps1 -Distribution '$Distribution'."
 
-    # Create basic WSL configuration
-    $wslConfig = @"
-[wsl2]
-memory=4GB
-processors=2
-"@
-    $wslConfig | Out-File -FilePath "$env:USERPROFILE\.wslconfig" -Encoding UTF8 -Force
-
-    Write-Success "WSL2 installation completed."
-    Write-Host "Launch '$Distribution' from Start Menu to complete setup." -ForegroundColor Yellow
+    if ($exitCode -eq 3010) {
+        Write-Host "A restart is required." -ForegroundColor Yellow
+    }
 }
 catch {
-    Write-Error "Installation failed: $($_.Exception.Message)"
+    Write-Failure $_.Exception.Message
     exit 1
 }
