@@ -146,15 +146,27 @@ test_idempotent_configuration() {
   mkdir -p "${home}"
   create_mocks "${mock_bin}"
 
+  cat > "${home}/.zshrc" <<'EOF'
+ZSH_THEME="agnoster"
+plugins=(
+  git
+  docker
+  kubectl # keep this plugin
+)
+export CUSTOM_SETTING="preserved"
+EOF
+
   run_setup "${mock_bin}" "${home}"
   run_setup "${mock_bin}" "${home}"
 
   assert_line_count 1 'ZSH_THEME="dracula"' "${home}/.zshrc"
   assert_line_count 1 \
-    'plugins=(git sudo extract colored-man-pages zsh-autosuggestions zsh-syntax-highlighting)' \
+    'plugins=(git docker kubectl sudo extract colored-man-pages zsh-autosuggestions zsh-syntax-highlighting)' \
     "${home}/.zshrc"
+  assert_line_count 1 'export CUSTOM_SETTING="preserved"' "${home}/.zshrc"
 
   test -L "${home}/.oh-my-zsh/custom/themes/dracula.zsh-theme"
+  test "$(find "${home}/.env-setup/backups" -type f -name 'zshrc-*.bak' | wc -l)" -ge 1
 }
 
 test_git_failure_is_reported() {
