@@ -141,7 +141,9 @@ try {
         throw "Unknown task IDs: $($unknownTaskIds -join ', ')"
     }
 
-    $requiresGitIdentity = @($selectedTaskIds | Where-Object {
+    $orderedTaskIds = Resolve-TaskOrder -Tasks $tasks -SelectedTaskIds $selectedTaskIds
+
+    $requiresGitIdentity = @($orderedTaskIds | Where-Object {
         $_ -in @('git.windows-config', 'git.wsl-config', 'ssh.windows-key', 'ssh.github-upload')
     }).Count -gt 0
     if ($requiresGitIdentity) {
@@ -162,7 +164,7 @@ try {
         }
     }
 
-    $requiresWsl = @($selectedTaskIds | Where-Object { $_ -like 'wsl.*' -or $_ -like 'git.wsl-*' }).Count -gt 0
+    $requiresWsl = @($orderedTaskIds | Where-Object { $_ -like 'wsl.*' -or $_ -like 'git.wsl-*' }).Count -gt 0
     if ($requiresWsl -and -not $NonInteractive -and -not $Resume -and $null -eq $requestedPlan -and -not [Console]::IsInputRedirected) {
         $context.Options.WslDistribution = Read-RequiredValue -Prompt 'WSL distribution' -DefaultValue $context.Options.WslDistribution
     }
@@ -172,10 +174,9 @@ try {
         throw "Unsupported WSL distribution '$($context.Options.WslDistribution)'. Supported distributions: $($supported -join ', ')."
     }
 
-    if ($NonInteractive) {
+    if ($NonInteractive -and -not $Check -and -not $DryRun) {
         $taskMap = @{}
         foreach ($task in $tasks) { $taskMap[$task.Id] = $task }
-        $orderedTaskIds = Resolve-TaskOrder -Tasks $tasks -SelectedTaskIds $selectedTaskIds
         foreach ($interactiveTaskId in @('github.authenticate', 'ssh.windows-key', 'wsl.initialize')) {
             if ($orderedTaskIds -notcontains $interactiveTaskId) { continue }
 
@@ -187,7 +188,7 @@ try {
                 $configured = $false
             }
 
-            if (-not $configured) {
+            if ($Repair -or -not $configured) {
                 throw "Task '$interactiveTaskId' requires interactive input and cannot run with -NonInteractive. Configure it interactively, then resume."
             }
         }
