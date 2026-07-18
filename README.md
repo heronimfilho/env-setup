@@ -2,36 +2,58 @@
 
 ## Installs
 
-- WSL 2
-- Linux distribution
-- Zsh
-- Oh My Zsh
-- Dracula theme
-- Zsh autosuggestions
-- Zsh syntax highlighting
+Core:
+
+- PowerShell 7
+- Windows Terminal
+- Git for Windows and Git Credential Manager
+- GitHub CLI
+- Visual Studio Code
+- 7-Zip
+- WSL 2 and a Linux distribution
+- Linux development tools
+- Zsh, Oh My Zsh and Dracula
+- NVM and the latest Node.js LTS
+
+Optional:
+
+- SSH key and GitHub authentication
+- Docker Desktop
+- PowerToys
+- DBeaver
+- Bruno or Postman
+- .NET SDK
+- AWS CLI
+- Terraform
+- kubectl and Helm
+- Developer Mode
+- Windows Sandbox
+- VS Code profiles for Node.js, .NET, Delphi and DevOps
 
 ## Options
 
-Default distribution: `Ubuntu`
-
 ```powershell
-.\install-wsl.ps1 -Distribution Ubuntu
-.\install-wsl.ps1 -Distribution Ubuntu-24.04
-.\install-wsl.ps1 -Distribution Ubuntu-22.04
-.\install-wsl.ps1 -Distribution Debian
-.\install-wsl.ps1 -Distribution kali-linux
+.\setup.ps1
+.\setup.ps1 -Profile Core
+.\setup.ps1 -Profile Backend
+.\setup.ps1 -Profile Full
+.\setup.ps1 -Config .\profile.json
+.\setup.ps1 -Include windows.git,wsl.node
+.\setup.ps1 -Exclude windows.docker
+.\setup.ps1 -WslDistribution Ubuntu-24.04
+.\setup.ps1 -WslWebDownload
+.\setup.ps1 -DryRun
+.\setup.ps1 -Check
+.\setup.ps1 -Repair
+.\setup.ps1 -Resume
 ```
 
-Use `-WebDownload` when Microsoft Store installation is unavailable:
+Non-interactive Git configuration:
 
 ```powershell
-.\install-wsl.ps1 -Distribution Ubuntu -WebDownload
-```
-
-Available distributions:
-
-```powershell
-wsl --list --online
+.\setup.ps1 -Profile Backend -NonInteractive `
+  -GitName "Your Name" `
+  -GitEmail "you@example.com"
 ```
 
 ## Zsh
@@ -47,21 +69,38 @@ Plugins:
 - `zsh-autosuggestions`
 - `zsh-syntax-highlighting`
 
+Node.js:
+
+- NVM `v0.40.4`
+- latest Node.js LTS
+- latest compatible npm
+- default alias `lts/*`
+- Corepack when available
+
 ## Install
 
-Run PowerShell as Administrator:
+Run PowerShell as Administrator.
+
+Without Git:
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+irm https://raw.githubusercontent.com/heronimfilho/env-setup/main/bootstrap.ps1 | iex
+```
+
+With Git:
 
 ```powershell
 git clone https://github.com/heronimfilho/env-setup.git
 cd env-setup
 Set-ExecutionPolicy -Scope Process Bypass
-.\install-wsl.ps1 -Distribution Ubuntu
+.\setup.ps1
 ```
 
-Restart Windows, launch the distribution once, create the Linux user, then open PowerShell normally:
+After a restart or interrupted task:
 
 ```powershell
-cd env-setup
+cd $HOME\env-setup
 Set-ExecutionPolicy -Scope Process Bypass
-.\configure-zsh.ps1 -Distribution Ubuntu
+.\setup.ps1 -Resume
 ```
