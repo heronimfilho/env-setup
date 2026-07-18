@@ -25,6 +25,8 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'src/EnvSetup.Git.ps1')
 . (Join-Path $PSScriptRoot 'src/EnvSetup.VSCode.ps1')
 . (Join-Path $PSScriptRoot 'src/EnvSetup.WSL.ps1')
+. (Join-Path $PSScriptRoot 'src/EnvSetup.Shell.ps1')
+. (Join-Path $PSScriptRoot 'src/EnvSetup.WindowsSettings.ps1')
 
 $paths = Initialize-EnvSetupStorage
 $state = Read-JsonFile -Path $paths.StatePath -DefaultValue (New-EnvSetupState)
@@ -33,6 +35,8 @@ $tasks = @(
     Get-GitTasks
     Get-VSCodeTasks
     Get-WslTasks
+    Get-ShellTasks
+    Get-WindowsSettingsTasks
 )
 
 $context = [pscustomobject]@{
