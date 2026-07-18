@@ -37,6 +37,10 @@ jobs:
             }
           }
 
+      - name: Run setup core tests
+        shell: powershell
+        run: .\tests\core.test.ps1
+
   shell:
     runs-on: ubuntu-latest
 
