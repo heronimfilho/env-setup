@@ -26,15 +26,20 @@ function Get-EnvSetupDataPath {
 }
 
 function Initialize-EnvSetupStorage {
-    param([string]$RootPath = (Get-EnvSetupDataPath))
+    param(
+        [string]$RootPath = (Get-EnvSetupDataPath),
+        [switch]$ReadOnly
+    )
 
-    foreach ($directory in @(
-        $RootPath,
-        (Join-Path $RootPath 'backups'),
-        (Join-Path $RootPath 'logs')
-    )) {
-        if (-not (Test-Path -LiteralPath $directory)) {
-            New-Item -ItemType Directory -Path $directory -Force | Out-Null
+    if (-not $ReadOnly) {
+        foreach ($directory in @(
+            $RootPath,
+            (Join-Path $RootPath 'backups'),
+            (Join-Path $RootPath 'logs')
+        )) {
+            if (-not (Test-Path -LiteralPath $directory)) {
+                New-Item -ItemType Directory -Path $directory -Force | Out-Null
+            }
         }
     }
 
@@ -80,6 +85,38 @@ function Write-JsonFileAtomic {
     $json = $Value | ConvertTo-Json -Depth 12
     [System.IO.File]::WriteAllText($temporaryPath, $json, [System.Text.UTF8Encoding]::new($false))
     Move-Item -LiteralPath $temporaryPath -Destination $Path -Force
+}
+
+function Get-OptionalPropertyValue {
+    param(
+        $Object,
+        [Parameter(Mandatory = $true)][string]$Name,
+        $DefaultValue = $null
+    )
+
+    if ($null -eq $Object) { return $DefaultValue }
+    $property = $Object.PSObject.Properties[$Name]
+    if ($null -eq $property) { return $DefaultValue }
+    return $property.Value
+}
+
+function Assert-SetupPlanSchema {
+    param([Parameter(Mandatory = $true)]$Plan)
+
+    $schemaVersion = Get-OptionalPropertyValue -Object $Plan -Name 'schemaVersion' -DefaultValue 1
+    if ([int]$schemaVersion -ne 1) {
+        throw "Unsupported setup plan schema version: $schemaVersion."
+    }
+
+    $selectedTasksProperty = $Plan.PSObject.Properties['selectedTasks']
+    if ($null -eq $selectedTasksProperty -or $selectedTasksProperty.Value -is [string]) {
+        throw 'The configuration file must contain a selectedTasks array.'
+    }
+
+    $options = Get-OptionalPropertyValue -Object $Plan -Name 'options'
+    if ($null -ne $options -and $options -isnot [pscustomobject] -and $options -isnot [System.Collections.IDictionary]) {
+        throw 'The configuration options property must be an object.'
+    }
 }
 
 function New-EnvSetupState {
@@ -313,6 +350,18 @@ function Resolve-TaskOrder {
     return @($resolved)
 }
 
+function Assert-NoExcludedTaskDependencies {
+    param(
+        [Parameter(Mandatory = $true)][string[]]$OrderedTaskIds,
+        [string[]]$ExcludedTaskIds = @()
+    )
+
+    $blocked = @($OrderedTaskIds | Where-Object { $_ -in $ExcludedTaskIds } | Select-Object -Unique)
+    if ($blocked.Count -gt 0) {
+        throw "Cannot exclude required task dependencies: $($blocked -join ', ')."
+    }
+}
+
 function Invoke-SetupTask {
     param(
         [Parameter(Mandatory = $true)]$Task,
@@ -324,12 +373,6 @@ function Invoke-SetupTask {
 
     try {
         $alreadyConfigured = [bool](& $Task.Detect $Context)
-        if ($alreadyConfigured -and -not $Context.Repair) {
-            Set-StateTask -State $Context.State -TaskId $taskId -Status 'completed' -Message 'Already configured.'
-            Write-JsonFileAtomic -Value $Context.State -Path $Context.Paths.StatePath
-            Write-SetupMessage -Message 'Already configured.' -Level Success
-            return
-        }
 
         if ($Context.Check) {
             $status = if ($alreadyConfigured) { 'configured' } else { 'missing' }
@@ -339,7 +382,19 @@ function Invoke-SetupTask {
         }
 
         if ($Context.DryRun) {
-            Write-SetupMessage -Message 'Planned; no changes were made.' -Level Muted
+            if ($alreadyConfigured -and -not $Context.Repair) {
+                Write-SetupMessage -Message 'Already configured; no changes were made.' -Level Success
+            }
+            else {
+                Write-SetupMessage -Message 'Planned; no changes were made.' -Level Muted
+            }
+            return
+        }
+
+        if ($alreadyConfigured -and -not $Context.Repair) {
+            Set-StateTask -State $Context.State -TaskId $taskId -Status 'completed' -Message 'Already configured.'
+            Write-JsonFileAtomic -Value $Context.State -Path $Context.Paths.StatePath
+            Write-SetupMessage -Message 'Already configured.' -Level Success
             return
         }
 
@@ -360,8 +415,10 @@ function Invoke-SetupTask {
         Write-SetupMessage -Message 'Completed.' -Level Success
     }
     catch {
-        Set-StateTask -State $Context.State -TaskId $taskId -Status 'failed' -Message $_.Exception.Message
-        Write-JsonFileAtomic -Value $Context.State -Path $Context.Paths.StatePath
+        if (-not $Context.Check -and -not $Context.DryRun) {
+            Set-StateTask -State $Context.State -TaskId $taskId -Status 'failed' -Message $_.Exception.Message
+            Write-JsonFileAtomic -Value $Context.State -Path $Context.Paths.StatePath
+        }
         Write-SetupMessage -Message $_.Exception.Message -Level Error
         throw
     }
