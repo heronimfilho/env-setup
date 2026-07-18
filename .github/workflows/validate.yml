@@ -41,6 +41,10 @@ jobs:
         shell: powershell
         run: .\tests\core.test.ps1
 
+      - name: Run Git configuration tests
+        shell: powershell
+        run: .\tests\git.test.ps1
+
   shell:
     runs-on: ubuntu-latest
 
