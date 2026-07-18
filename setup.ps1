@@ -13,7 +13,8 @@ param(
     [switch]$NonInteractive,
     [string]$GitName,
     [string]$GitEmail,
-    [string]$WslDistribution = 'Ubuntu'
+    [string]$WslDistribution = 'Ubuntu',
+    [switch]$WslWebDownload
 )
 
 Set-StrictMode -Version Latest
@@ -23,6 +24,7 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'src/EnvSetup.Windows.ps1')
 . (Join-Path $PSScriptRoot 'src/EnvSetup.Git.ps1')
 . (Join-Path $PSScriptRoot 'src/EnvSetup.VSCode.ps1')
+. (Join-Path $PSScriptRoot 'src/EnvSetup.WSL.ps1')
 
 $paths = Initialize-EnvSetupStorage
 $state = Read-JsonFile -Path $paths.StatePath -DefaultValue (New-EnvSetupState)
@@ -30,6 +32,7 @@ $tasks = @(
     Get-WindowsPackageTasks
     Get-GitTasks
     Get-VSCodeTasks
+    Get-WslTasks
 )
 
 $context = [pscustomobject]@{
@@ -44,6 +47,7 @@ $context = [pscustomobject]@{
         GitName         = $GitName
         GitEmail        = $GitEmail
         WslDistribution = $WslDistribution
+        WslWebDownload  = [bool]$WslWebDownload
     }
 }
 
@@ -63,7 +67,12 @@ if ($Resume) {
     if ($null -ne $existingPlan.options) {
         if ([string]::IsNullOrWhiteSpace($context.Options.GitName)) { $context.Options.GitName = $existingPlan.options.GitName }
         if ([string]::IsNullOrWhiteSpace($context.Options.GitEmail)) { $context.Options.GitEmail = $existingPlan.options.GitEmail }
-        if ([string]::IsNullOrWhiteSpace($context.Options.WslDistribution)) { $context.Options.WslDistribution = $existingPlan.options.WslDistribution }
+        if ($PSBoundParameters.ContainsKey('WslDistribution') -eq $false -and -not [string]::IsNullOrWhiteSpace($existingPlan.options.WslDistribution)) {
+            $context.Options.WslDistribution = $existingPlan.options.WslDistribution
+        }
+        if ($PSBoundParameters.ContainsKey('WslWebDownload') -eq $false -and $null -ne $existingPlan.options.WslWebDownload) {
+            $context.Options.WslWebDownload = [bool]$existingPlan.options.WslWebDownload
+        }
     }
 }
 elseif ($Include.Count -gt 0) {
@@ -78,7 +87,14 @@ else {
     }
 
     $menuItems = foreach ($task in $tasks) {
-        $configured = [bool](& $task.Detect $context)
+        $configured = $false
+        try {
+            $configured = [bool](& $task.Detect $context)
+        }
+        catch {
+            $configured = $false
+        }
+
         [pscustomobject]@{
             Id       = $task.Id
             Label    = "$($task.Category): $($task.Name)"
@@ -102,7 +118,9 @@ if ($unknownTaskIds.Count -gt 0) {
     throw "Unknown task IDs: $($unknownTaskIds -join ', ')"
 }
 
-$requiresGitIdentity = @($selectedTaskIds | Where-Object { $_ -in @('git.windows-config', 'ssh.windows-key', 'ssh.github-upload') }).Count -gt 0
+$requiresGitIdentity = @($selectedTaskIds | Where-Object {
+    $_ -in @('git.windows-config', 'git.wsl-config', 'ssh.windows-key', 'ssh.github-upload')
+}).Count -gt 0
 if ($requiresGitIdentity) {
     if ([string]::IsNullOrWhiteSpace($context.Options.GitName)) {
         $context.Options.GitName = Get-GitConfigValue -Key 'user.name'
@@ -119,6 +137,11 @@ if ($requiresGitIdentity) {
     elseif ([string]::IsNullOrWhiteSpace($context.Options.GitName) -or [string]::IsNullOrWhiteSpace($context.Options.GitEmail)) {
         throw 'Git identity is required. Provide -GitName and -GitEmail.'
     }
+}
+
+$requiresWsl = @($selectedTaskIds | Where-Object { $_ -like 'wsl.*' -or $_ -like 'git.wsl-*' }).Count -gt 0
+if ($requiresWsl -and -not $NonInteractive -and -not $Resume -and -not [Console]::IsInputRedirected) {
+    $context.Options.WslDistribution = Read-RequiredValue -Prompt 'WSL distribution' -DefaultValue $context.Options.WslDistribution
 }
 
 $plan = [pscustomobject]@{
