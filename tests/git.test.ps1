@@ -34,6 +34,11 @@ try {
         throw 'Git pull strategy was not configured.'
     }
 
+    $gitTask = @(Get-GitTasks) | Where-Object { $_.Id -eq 'git.windows-config' } | Select-Object -First 1
+    if ($gitTask.Dependencies -notcontains 'windows.vscode') {
+        throw 'Git for Windows configuration must depend on Visual Studio Code.'
+    }
+
     Write-Host 'Git tests passed.'
 }
 finally {
