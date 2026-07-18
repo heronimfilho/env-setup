@@ -1,5 +1,20 @@
 Set-StrictMode -Version Latest
 
+function Get-SupportedWslDistributions {
+    return @(
+        'Ubuntu',
+        'Ubuntu-24.04',
+        'Ubuntu-22.04',
+        'Debian',
+        'kali-linux'
+    )
+}
+
+function Test-WslDistributionSupported {
+    param([Parameter(Mandatory = $true)][string]$Distribution)
+    return (Get-SupportedWslDistributions) -contains $Distribution
+}
+
 function Get-InstalledWslDistributions {
     if (-not (Test-CommandAvailable -Name 'wsl.exe')) {
         return @()
@@ -17,13 +32,78 @@ function Get-InstalledWslDistributions {
     )
 }
 
+function Get-WslDistributionVersion {
+    param([Parameter(Mandatory = $true)][string]$Distribution)
+
+    if (-not (Test-CommandAvailable -Name 'wsl.exe')) {
+        return $null
+    }
+
+    $result = Invoke-NativeCommand -FilePath 'wsl.exe' -ArgumentList @('--list', '--verbose') -AllowFailure -Quiet
+    if ($result.ExitCode -ne 0) {
+        return $null
+    }
+
+    foreach ($outputLine in $result.Output) {
+        $line = ([string]$outputLine -replace "`0", '').Trim()
+        if ($line.StartsWith('*')) {
+            $line = $line.Substring(1).Trim()
+        }
+        if ([string]::IsNullOrWhiteSpace($line)) { continue }
+
+        $parts = @($line -split '\s+')
+        if ($parts.Count -lt 3 -or $parts[0] -ne $Distribution) { continue }
+
+        $version = $parts[$parts.Count - 1]
+        if ($version -match '^[12]$') {
+            return [int]$version
+        }
+    }
+
+    return $null
+}
+
 function Test-WslDistributionInstalled {
     param([Parameter(Mandatory = $true)]$Context)
     return (Get-InstalledWslDistributions) -contains $Context.Options.WslDistribution
 }
 
+function Test-WslDistributionReady {
+    param([Parameter(Mandatory = $true)]$Context)
+    if (-not (Test-WslDistributionInstalled -Context $Context)) { return $false }
+    return (Get-WslDistributionVersion -Distribution $Context.Options.WslDistribution) -eq 2
+}
+
+function Set-WslDistributionVersionTwo {
+    param([Parameter(Mandatory = $true)]$Context)
+
+    Invoke-NativeCommand -FilePath 'wsl.exe' -ArgumentList @(
+        '--set-version', $Context.Options.WslDistribution, '2'
+    ) | Out-Null
+}
+
 function Install-WslDistribution {
     param([Parameter(Mandatory = $true)]$Context)
+
+    if (-not (Test-WslDistributionSupported -Distribution $Context.Options.WslDistribution)) {
+        throw "Unsupported WSL distribution: $($Context.Options.WslDistribution)."
+    }
+
+    if (Test-WslDistributionInstalled -Context $Context) {
+        $version = Get-WslDistributionVersion -Distribution $Context.Options.WslDistribution
+        if ($version -eq 1) {
+            Write-SetupMessage -Message "Converting $($Context.Options.WslDistribution) to WSL 2." -Level Info
+            Set-WslDistributionVersionTwo -Context $Context
+        }
+        elseif ($version -ne 2) {
+            throw "Could not determine the WSL version for $($Context.Options.WslDistribution)."
+        }
+
+        if (-not (Test-WslDistributionReady -Context $Context)) {
+            throw "The distribution is installed but is not running on WSL 2: $($Context.Options.WslDistribution)."
+        }
+        return
+    }
 
     $arguments = @(
         '--install',
@@ -39,7 +119,14 @@ function Install-WslDistribution {
         throw "WSL installation failed with exit code $($result.ExitCode)."
     }
 
-    if (-not (Test-WslDistributionInstalled -Context $Context)) {
+    if (Test-WslDistributionInstalled -Context $Context) {
+        $version = Get-WslDistributionVersion -Distribution $Context.Options.WslDistribution
+        if ($version -eq 1) {
+            Set-WslDistributionVersionTwo -Context $Context
+        }
+    }
+
+    if (-not (Test-WslDistributionReady -Context $Context)) {
         throw 'Restart Windows, then run .\setup.ps1 -Resume.'
     }
 }
@@ -88,7 +175,7 @@ function Invoke-WslCommand {
 function Test-WslDistributionInitialized {
     param([Parameter(Mandatory = $true)]$Context)
 
-    if (-not (Test-WslDistributionInstalled -Context $Context)) { return $false }
+    if (-not (Test-WslDistributionReady -Context $Context)) { return $false }
     $defaultUid = Get-WslDistributionDefaultUid -Distribution $Context.Options.WslDistribution
     if ($null -eq $defaultUid -or $defaultUid -eq 0) { return $false }
 
@@ -98,6 +185,10 @@ function Test-WslDistributionInitialized {
 
 function Initialize-WslDistribution {
     param([Parameter(Mandatory = $true)]$Context)
+
+    if ($Context.Options.NonInteractive) {
+        throw 'Linux user initialization requires an interactive terminal. Run setup without -NonInteractive, then resume.'
+    }
 
     Write-SetupMessage -Message "Complete the Linux user creation for $($Context.Options.WslDistribution), then exit the distribution." -Level Warning
     & wsl.exe --distribution $Context.Options.WslDistribution
@@ -136,7 +227,12 @@ function Invoke-WslProjectScript {
     }
 
     $wslPath = Convert-ToWslPath -Context $Context -WindowsPath $windowsPath
-    Invoke-WslCommand -Distribution $Context.Options.WslDistribution -ArgumentList @('bash', $wslPath) | Out-Null
+    $arguments = @('env')
+    if ($Context.Options.NonInteractive) {
+        $arguments += 'ENV_SETUP_NONINTERACTIVE=1'
+    }
+    $arguments += @('bash', $wslPath)
+    Invoke-WslCommand -Distribution $Context.Options.WslDistribution -ArgumentList $arguments | Out-Null
 }
 
 function Test-WslBasePackages {
@@ -151,10 +247,11 @@ function Test-WslBasePackages {
 function Install-WslBasePackages {
     param([Parameter(Mandatory = $true)]$Context)
 
+    $sudoCommand = if ($Context.Options.NonInteractive) { 'sudo -n' } else { 'sudo' }
     $command = @'
 set -Eeuo pipefail
-sudo apt-get update
-sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y \
+__SUDO__ apt-get update
+__SUDO__ env DEBIAN_FRONTEND=noninteractive apt-get install -y \
   build-essential \
   ca-certificates \
   curl \
@@ -167,7 +264,7 @@ sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y \
   unzip \
   zip
 mkdir -p "$HOME/projects" "$HOME/bin"
-'@
+'@ -replace '__SUDO__', $sudoCommand
     Invoke-WslCommand -Distribution $Context.Options.WslDistribution -ArgumentList @('bash', '-lc', $command) | Out-Null
 }
 
@@ -267,11 +364,28 @@ function Test-WslZshConfiguration {
     return $result.ExitCode -eq 0
 }
 
+function Get-WslNodeValidationCommand {
+    return @'
+export NVM_DIR="$HOME/.nvm"
+test -s "$NVM_DIR/nvm.sh"
+. "$NVM_DIR/nvm.sh"
+test "$(nvm --version)" = "0.40.4"
+nvm alias default | grep -Fq 'default -> lts/*'
+current_version="$(nvm current)"
+lts_version="$(nvm version 'lts/*')"
+test "$lts_version" != "N/A"
+test "$current_version" = "$lts_version"
+test "$(node --version)" = "$current_version"
+npm --version >/dev/null
+'@
+}
+
 function Test-WslNodeConfiguration {
     param([Parameter(Mandatory = $true)]$Context)
     if (-not (Test-WslDistributionInitialized -Context $Context)) { return $false }
-    $command = 'export NVM_DIR="$HOME/.nvm"; test -s "$NVM_DIR/nvm.sh" && . "$NVM_DIR/nvm.sh" && nvm current | grep -vq ''none'' && node --version >/dev/null && npm --version >/dev/null'
-    $result = Invoke-WslCommand -Distribution $Context.Options.WslDistribution -ArgumentList @('bash', '-lc', $command) -AllowFailure -Quiet
+    $result = Invoke-WslCommand -Distribution $Context.Options.WslDistribution -ArgumentList @(
+        'bash', '-lc', (Get-WslNodeValidationCommand)
+    ) -AllowFailure -Quiet
     return $result.ExitCode -eq 0
 }
 
@@ -280,9 +394,9 @@ function Get-WslTasks {
         [pscustomobject]@{
             Id = 'wsl.install'; Name = 'Install WSL 2 and the Linux distribution'; Category = 'WSL'; Default = $true
             Profiles = @('Core', 'Backend', 'Full'); RequiresAdmin = $true; Dependencies = @()
-            Detect = { param($Context) Test-WslDistributionInstalled -Context $Context }
+            Detect = { param($Context) Test-WslDistributionReady -Context $Context }
             Apply = { param($Context) Install-WslDistribution -Context $Context }
-            Verify = { param($Context) Test-WslDistributionInstalled -Context $Context }
+            Verify = { param($Context) Test-WslDistributionReady -Context $Context }
         }
         [pscustomobject]@{
             Id = 'wsl.initialize'; Name = 'Initialize the Linux user'; Category = 'WSL'; Default = $true
