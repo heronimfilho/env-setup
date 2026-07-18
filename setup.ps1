@@ -22,6 +22,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 . (Join-Path $PSScriptRoot 'src/EnvSetup.Core.ps1')
+. (Join-Path $PSScriptRoot 'src/EnvSetup.Selection.ps1')
 . (Join-Path $PSScriptRoot 'src/EnvSetup.Lock.ps1')
 . (Join-Path $PSScriptRoot 'src/EnvSetup.Windows.ps1')
 . (Join-Path $PSScriptRoot 'src/EnvSetup.Git.ps1')
@@ -75,7 +76,9 @@ try {
 
     $selectedTaskIds = @()
     $existingPlan = Read-JsonFile -Path $paths.PlanPath
+    $savedPreferencePlan = Get-ValidatedSavedSetupPlan -Plan $existingPlan
     $requestedPlan = $null
+    $usedInteractiveMenu = $false
 
     if (-not [string]::IsNullOrWhiteSpace($Config)) {
         $configPath = (Resolve-Path -LiteralPath $Config -ErrorAction Stop).Path
@@ -87,12 +90,11 @@ try {
     }
 
     if ($Resume) {
-        if ($null -eq $existingPlan) {
-            throw 'No saved setup plan was found.'
+        if ($null -eq $savedPreferencePlan) {
+            throw 'No valid saved setup plan was found.'
         }
-        Assert-SetupPlanSchema -Plan $existingPlan
-        $requestedPlan = $existingPlan
-        $selectedTaskIds = @($existingPlan.selectedTasks)
+        $requestedPlan = $savedPreferencePlan
+        $selectedTaskIds = @($savedPreferencePlan.selectedTasks)
     }
     elseif ($null -ne $requestedPlan) {
         $selectedTaskIds = @($requestedPlan.selectedTasks)
@@ -108,49 +110,25 @@ try {
             throw 'Use -Profile, -Config, or -Include with -NonInteractive.'
         }
 
-        $menuItems = foreach ($task in $tasks) {
-            $configured = $false
-            try {
-                $configured = [bool](& $task.Detect $context)
-            }
-            catch {
-                $configured = $false
-            }
-
-            [pscustomobject]@{
-                Id       = $task.Id
-                Label    = "$($task.Category): $($task.Name)"
-                Selected = [bool]$task.Default
-                Status   = if ($configured) { 'configured' } else { '' }
-            }
+        $usedInteractiveMenu = $true
+        if ($null -ne $savedPreferencePlan) {
+            Write-SetupMessage -Message 'Loaded the selections from the previous interactive run.' -Level Muted
         }
-
+        $menuItems = Get-InteractiveTaskMenuItems -Tasks $tasks -Context $context -SavedPlan $savedPreferencePlan
         $selectedTaskIds = Show-MultiSelectMenu -Title 'Select the components to install and configure' -Items $menuItems
     }
 
-    if ($null -ne $requestedPlan) {
-        $requestedOptions = Get-OptionalPropertyValue -Object $requestedPlan -Name 'options'
-        if ($null -ne $requestedOptions) {
-            if (-not $PSBoundParameters.ContainsKey('GitName')) {
-                $context.Options.GitName = Get-OptionalPropertyValue -Object $requestedOptions -Name 'GitName' -DefaultValue $context.Options.GitName
-            }
-            if (-not $PSBoundParameters.ContainsKey('GitEmail')) {
-                $context.Options.GitEmail = Get-OptionalPropertyValue -Object $requestedOptions -Name 'GitEmail' -DefaultValue $context.Options.GitEmail
-            }
-            if (-not $PSBoundParameters.ContainsKey('WslDistribution')) {
-                $requestedDistribution = Get-OptionalPropertyValue -Object $requestedOptions -Name 'WslDistribution'
-                if (-not [string]::IsNullOrWhiteSpace([string]$requestedDistribution)) {
-                    $context.Options.WslDistribution = [string]$requestedDistribution
-                }
-            }
-            if (-not $PSBoundParameters.ContainsKey('WslWebDownload')) {
-                $requestedWebDownload = Get-OptionalPropertyValue -Object $requestedOptions -Name 'WslWebDownload'
-                if ($null -ne $requestedWebDownload) {
-                    $context.Options.WslWebDownload = [bool]$requestedWebDownload
-                }
-            }
-        }
+    $optionPlan = if ($null -ne $requestedPlan) {
+        $requestedPlan
     }
+    elseif ($usedInteractiveMenu) {
+        $savedPreferencePlan
+    }
+    else {
+        $null
+    }
+    Set-SetupOptionsFromPlan -Context $context -Plan $optionPlan -ExplicitOptionNames @($PSBoundParameters.Keys)
+    $usingSavedPreferences = $usedInteractiveMenu -and $null -ne $savedPreferencePlan
 
     $knownTaskIds = @($tasks | ForEach-Object { $_.Id })
     $unknownTaskIds = @($selectedTaskIds | Where-Object { $_ -notin $knownTaskIds })
@@ -182,18 +160,20 @@ try {
             $context.Options.GitEmail = Get-GitConfigValue -Key 'user.email'
         }
 
+        $hasGitIdentity = -not [string]::IsNullOrWhiteSpace($context.Options.GitName) -and
+            -not [string]::IsNullOrWhiteSpace($context.Options.GitEmail)
         $canPrompt = -not $NonInteractive -and -not [Console]::IsInputRedirected
-        if ($canPrompt) {
+        if ($canPrompt -and (-not $usingSavedPreferences -or -not $hasGitIdentity)) {
             $context.Options.GitName = Read-RequiredValue -Prompt 'Git user name' -DefaultValue $context.Options.GitName
             $context.Options.GitEmail = Read-RequiredValue -Prompt 'Git email' -DefaultValue $context.Options.GitEmail
         }
-        elseif ([string]::IsNullOrWhiteSpace($context.Options.GitName) -or [string]::IsNullOrWhiteSpace($context.Options.GitEmail)) {
+        elseif (-not $hasGitIdentity) {
             throw 'Git identity is required. Provide -GitName and -GitEmail.'
         }
     }
 
     $requiresWsl = @($orderedTaskIds | Where-Object { $_ -like 'wsl.*' -or $_ -like 'git.wsl-*' }).Count -gt 0
-    if ($requiresWsl -and -not $NonInteractive -and -not $Resume -and $null -eq $requestedPlan -and -not [Console]::IsInputRedirected) {
+    if ($requiresWsl -and -not $NonInteractive -and -not $Resume -and $null -eq $requestedPlan -and -not $usingSavedPreferences -and -not [Console]::IsInputRedirected) {
         $context.Options.WslDistribution = Read-RequiredValue -Prompt 'WSL distribution' -DefaultValue $context.Options.WslDistribution
     }
 
