@@ -15,6 +15,22 @@ function Test-WslDistributionSupported {
     return (Get-SupportedWslDistributions) -contains $Distribution
 }
 
+function Get-WslBasePackageNames {
+    return @(
+        'build-essential',
+        'ca-certificates',
+        'curl',
+        'git',
+        'htop',
+        'jq',
+        'ripgrep',
+        'shellcheck',
+        'tree',
+        'unzip',
+        'zip'
+    )
+}
+
 function Get-InstalledWslDistributions {
     if (-not (Test-CommandAvailable -Name 'wsl.exe')) {
         return @()
@@ -131,25 +147,6 @@ function Install-WslDistribution {
     }
 }
 
-function Get-WslDistributionDefaultUid {
-    param([Parameter(Mandatory = $true)][string]$Distribution)
-
-    $registryPath = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Lxss'
-    if (-not (Test-Path -LiteralPath $registryPath)) {
-        return $null
-    }
-
-    $entry = Get-ChildItem -LiteralPath $registryPath -ErrorAction SilentlyContinue |
-        ForEach-Object { Get-ItemProperty -LiteralPath $_.PSPath } |
-        Where-Object { $_.DistributionName -eq $Distribution } |
-        Select-Object -First 1
-
-    if ($null -eq $entry) { return $null }
-    $property = $entry.PSObject.Properties['DefaultUid']
-    if ($null -eq $property) { return $null }
-    return [uint32]$property.Value
-}
-
 function Invoke-WslCommand {
     param(
         [Parameter(Mandatory = $true)][string]$Distribution,
@@ -169,18 +166,19 @@ function Invoke-WslCommand {
         throw "WSL command exited with code $exitCode.`n$($output -join [Environment]::NewLine)"
     }
 
-    return [pscustomobject]@{ ExitCode = $exitCode; Output = $output; Text = ($output -join [Environment]::NewLine) }
+    return [pscustomobject]@{
+        ExitCode = $exitCode
+        Output   = $output
+        Text     = ($output -join [Environment]::NewLine)
+    }
 }
 
 function Test-WslDistributionInitialized {
     param([Parameter(Mandatory = $true)]$Context)
 
     if (-not (Test-WslDistributionReady -Context $Context)) { return $false }
-    $defaultUid = Get-WslDistributionDefaultUid -Distribution $Context.Options.WslDistribution
-    if ($null -eq $defaultUid -or $defaultUid -eq 0) { return $false }
-
     $result = Invoke-WslCommand -Distribution $Context.Options.WslDistribution -ArgumentList @('id', '-u') -AllowFailure -Quiet
-    return $result.ExitCode -eq 0 -and $result.Text.Trim() -ne '0'
+    return $result.ExitCode -eq 0 -and $result.Text.Trim() -match '^\d+$' -and $result.Text.Trim() -ne '0'
 }
 
 function Initialize-WslDistribution {
@@ -235,12 +233,26 @@ function Invoke-WslProjectScript {
     Invoke-WslCommand -Distribution $Context.Options.WslDistribution -ArgumentList $arguments | Out-Null
 }
 
+function Get-WslBasePackageValidationCommand {
+    $packages = (Get-WslBasePackageNames) -join ' '
+    return (@'
+set -e
+for package in __PACKAGES__; do
+  status="$(dpkg-query -W -f='${Status}' "$package" 2>/dev/null || true)"
+  test "$status" = "install ok installed"
+done
+test -d "$HOME/projects"
+test -d "$HOME/bin"
+'@ -replace '__PACKAGES__', $packages)
+}
+
 function Test-WslBasePackages {
     param([Parameter(Mandatory = $true)]$Context)
     if (-not (Test-WslDistributionInitialized -Context $Context)) { return $false }
 
-    $command = 'command -v git >/dev/null && command -v curl >/dev/null && command -v jq >/dev/null && command -v rg >/dev/null && command -v shellcheck >/dev/null'
-    $result = Invoke-WslCommand -Distribution $Context.Options.WslDistribution -ArgumentList @('bash', '-lc', $command) -AllowFailure -Quiet
+    $result = Invoke-WslCommand -Distribution $Context.Options.WslDistribution -ArgumentList @(
+        'bash', '-lc', (Get-WslBasePackageValidationCommand)
+    ) -AllowFailure -Quiet
     return $result.ExitCode -eq 0
 }
 
@@ -248,23 +260,14 @@ function Install-WslBasePackages {
     param([Parameter(Mandatory = $true)]$Context)
 
     $sudoCommand = if ($Context.Options.NonInteractive) { 'sudo -n' } else { 'sudo' }
-    $command = @'
+    $packages = (Get-WslBasePackageNames) -join ' '
+    $command = (@'
 set -Eeuo pipefail
 __SUDO__ apt-get update
-__SUDO__ env DEBIAN_FRONTEND=noninteractive apt-get install -y \
-  build-essential \
-  ca-certificates \
-  curl \
-  git \
-  htop \
-  jq \
-  ripgrep \
-  shellcheck \
-  tree \
-  unzip \
-  zip
+__SUDO__ env DEBIAN_FRONTEND=noninteractive apt-get install -y __PACKAGES__
 mkdir -p "$HOME/projects" "$HOME/bin"
-'@ -replace '__SUDO__', $sudoCommand
+'@ -replace '__SUDO__', $sudoCommand) -replace '__PACKAGES__', $packages
+
     Invoke-WslCommand -Distribution $Context.Options.WslDistribution -ArgumentList @('bash', '-lc', $command) | Out-Null
 }
 
@@ -275,7 +278,9 @@ function Get-WslGitConfigValue {
     )
 
     if (-not (Test-WslDistributionInitialized -Context $Context)) { return $null }
-    $result = Invoke-WslCommand -Distribution $Context.Options.WslDistribution -ArgumentList @('git', 'config', '--global', '--get', $Key) -AllowFailure -Quiet
+    $result = Invoke-WslCommand -Distribution $Context.Options.WslDistribution -ArgumentList @(
+        'git', 'config', '--global', '--get', $Key
+    ) -AllowFailure -Quiet
     if ($result.ExitCode -ne 0) { return $null }
     return $result.Text.Trim()
 }
@@ -302,6 +307,9 @@ function Test-WslGitConfiguration {
 function Set-WslGitConfiguration {
     param([Parameter(Mandatory = $true)]$Context)
 
+    $backupCommand = 'if test -f "$HOME/.gitconfig"; then mkdir -p "$HOME/.env-setup/backups"; cp "$HOME/.gitconfig" "$HOME/.env-setup/backups/gitconfig-$(date +%Y%m%d-%H%M%S)-$$.bak"; fi'
+    Invoke-WslCommand -Distribution $Context.Options.WslDistribution -ArgumentList @('bash', '-lc', $backupCommand) -Quiet | Out-Null
+
     foreach ($item in ([ordered]@{
         'user.name' = $Context.Options.GitName
         'user.email' = $Context.Options.GitEmail
@@ -310,7 +318,9 @@ function Set-WslGitConfiguration {
         'pull.ff' = 'only'
         'core.editor' = 'code --wait'
     }).GetEnumerator()) {
-        Invoke-WslCommand -Distribution $Context.Options.WslDistribution -ArgumentList @('git', 'config', '--global', $item.Key, [string]$item.Value) -Quiet | Out-Null
+        Invoke-WslCommand -Distribution $Context.Options.WslDistribution -ArgumentList @(
+            'git', 'config', '--global', $item.Key, [string]$item.Value
+        ) -Quiet | Out-Null
     }
 }
 
@@ -331,13 +341,20 @@ function Get-GitCredentialManagerWindowsPath {
     return $candidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
 }
 
+function Convert-ToPosixSingleQuotedString {
+    param([Parameter(Mandatory = $true)][string]$Value)
+
+    $singleQuoteEscape = "'" + "\" + "'" + "'"
+    return "'" + $Value.Replace("'", $singleQuoteEscape) + "'"
+}
+
 function Get-WslGcmHelperValue {
     param([Parameter(Mandatory = $true)]$Context)
 
     $windowsPath = Get-GitCredentialManagerWindowsPath
     if ([string]::IsNullOrWhiteSpace($windowsPath)) { return $null }
     $wslPath = Convert-ToWslPath -Context $Context -WindowsPath $windowsPath
-    return $wslPath -replace ' ', '\ '
+    return Convert-ToPosixSingleQuotedString -Value $wslPath
 }
 
 function Test-WslGcmConfiguration {
@@ -353,7 +370,9 @@ function Set-WslGcmConfiguration {
     if ([string]::IsNullOrWhiteSpace($helper)) {
         throw 'Git Credential Manager was not found in the Git for Windows installation.'
     }
-    Invoke-WslCommand -Distribution $Context.Options.WslDistribution -ArgumentList @('git', 'config', '--global', 'credential.helper', $helper) -Quiet | Out-Null
+    Invoke-WslCommand -Distribution $Context.Options.WslDistribution -ArgumentList @(
+        'git', 'config', '--global', 'credential.helper', $helper
+    ) -Quiet | Out-Null
 }
 
 function Test-WslZshConfiguration {
@@ -372,9 +391,10 @@ test -s "$NVM_DIR/nvm.sh"
 test "$(nvm --version)" = "0.40.4"
 nvm alias default | grep -Fq 'default -> lts/*'
 current_version="$(nvm current)"
-lts_version="$(nvm version 'lts/*')"
-test "$lts_version" != "N/A"
-test "$current_version" = "$lts_version"
+remote_lts_version="$(nvm version-remote --lts 2>/dev/null || true)"
+test -n "$remote_lts_version"
+test "$remote_lts_version" != "N/A"
+test "$current_version" = "$remote_lts_version"
 test "$(node --version)" = "$current_version"
 npm --version >/dev/null
 '@
@@ -414,7 +434,7 @@ function Get-WslTasks {
         }
         [pscustomobject]@{
             Id = 'git.wsl-config'; Name = 'Configure Git inside WSL'; Category = 'Git and GitHub'; Default = $true
-            Profiles = @('Core', 'Backend', 'Full'); RequiresAdmin = $false; Dependencies = @('wsl.base')
+            Profiles = @('Core', 'Backend', 'Full'); RequiresAdmin = $false; Dependencies = @('wsl.base', 'windows.vscode')
             Detect = { param($Context) Test-WslGitConfiguration -Context $Context }
             Apply = { param($Context) Set-WslGitConfiguration -Context $Context }
             Verify = { param($Context) Test-WslGitConfiguration -Context $Context }
