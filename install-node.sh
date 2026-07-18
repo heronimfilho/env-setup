@@ -26,7 +26,14 @@ sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y \
   curl \
   git
 
-if [[ ! -s "${NVM_DIR}/nvm.sh" ]]; then
+if [[ -d "${NVM_DIR}/.git" ]]; then
+  current_nvm_ref="$(git -C "${NVM_DIR}" describe --tags --exact-match 2>/dev/null || true)"
+  if [[ "${current_nvm_ref}" != "${ENV_SETUP_NVM_VERSION}" ]]; then
+    echo "Updating NVM to ${ENV_SETUP_NVM_VERSION}..."
+    git -C "${NVM_DIR}" fetch --depth 1 origin "tag" "${ENV_SETUP_NVM_VERSION}"
+    git -C "${NVM_DIR}" checkout --force "${ENV_SETUP_NVM_VERSION}"
+  fi
+elif [[ ! -s "${NVM_DIR}/nvm.sh" ]]; then
   echo "Installing NVM ${ENV_SETUP_NVM_VERSION}..."
   PROFILE=/dev/null NVM_DIR="${NVM_DIR}" bash -c \
     "$(curl -fsSL "https://raw.githubusercontent.com/nvm-sh/nvm/${ENV_SETUP_NVM_VERSION}/install.sh")"
@@ -101,7 +108,7 @@ if ! command -v npm >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "NVM ${ENV_SETUP_NVM_VERSION} configured."
+echo "NVM: $(nvm --version)"
 echo "Node.js: $(node --version)"
 echo "npm: $(npm --version)"
 echo "Default Node.js alias: lts/*"
