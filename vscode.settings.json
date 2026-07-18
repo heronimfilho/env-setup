@@ -1,5 +1,5 @@
 {
-  "security.workspace.trust.untrustedFiles": "open",
+  "security.workspace.trust.untrustedFiles": "prompt",
   "[css][dockercompose][github-actions-workflow][html][javascript][javascriptreact][json][jsonc][markdown][php][postcss][scss][sql][typescript][typescriptreact][xml][yaml]": {
     "editor.defaultFormatter": "esbenp.prettier-vscode",
     "editor.minimap.maxColumn": 80,
@@ -11,10 +11,6 @@
   "[markdown]": {
     "gitlens.codeLens.scopes": ["document"]
   },
-  "[csharp]": {
-    "editor.maxTokenizationLineLength": 2500,
-    "editor.inlineSuggest.suppressSuggestions": false
-  },
   "editor.tabSize": 2,
   "editor.insertSpaces": true,
   "editor.wordWrap": "on",
@@ -23,58 +19,39 @@
   "editor.rulers": [80, 100, 120],
   "editor.bracketPairColorization.enabled": true,
   "editor.codeActionsOnSave": {
-    "source.fixAll": "always",
-    "source.fixAll.eslint": "always",
-    "source.fixAll.markdownlint": "always",
-    "source.fixAll.sortJSON": "never",
-    "source.generate.finalModifiers": "always",
-    "source.organizeImports": "always",
-    "source.sortMembers": "always"
+    "source.fixAll.eslint": "explicit",
+    "source.fixAll.markdownlint": "explicit",
+    "source.organizeImports": "explicit"
   },
-  "editor.fontFamily": "Fira Mono, monospace, MesloLGS NF, Noto Color Emoji",
   "editor.cursorBlinking": "smooth",
   "editor.formatOnSave": true,
-
   "files.autoSave": "afterDelay",
+  "files.autoSaveDelay": 1000,
   "files.trimTrailingWhitespace": true,
   "files.insertFinalNewline": true,
-
   "search.useIgnoreFiles": true,
   "search.followSymlinks": false,
-
-  "explorer.confirmDelete": false,
-  "explorer.confirmDragAndDrop": false,
-
-  "git.enableSmartCommit": true,
+  "explorer.confirmDelete": true,
+  "explorer.confirmDragAndDrop": true,
+  "git.enableSmartCommit": false,
   "git.autofetch": true,
-  "git.confirmSync": false,
-
+  "git.confirmSync": true,
   "workbench.editor.enablePreview": false,
   "workbench.colorTheme": "Catppuccin Mocha",
-  "workbench.editor.defaultBinaryEditor": "default",
   "workbench.editor.highlightModifiedTabs": true,
   "workbench.editor.pinnedTabSizing": "shrink",
   "workbench.editor.revealIfOpen": true,
   "workbench.editor.tabSizing": "fit",
   "workbench.editor.wrapTabs": true,
   "workbench.iconTheme": "material-icon-theme",
-  "workbench.layoutControl.enabled": false,
   "workbench.list.smoothScrolling": true,
   "workbench.settings.editor": "json",
-  "workbench.settings.openDefaultKeybindings": true,
-  "workbench.settings.openDefaultSettings": true,
-  "workbench.settings.useSplitJSON": true,
   "workbench.startupEditor": "readme",
-
-  "window.zoomLevel": 0,
-
-  "terminal.integrated.fontFamily": "Fira Mono, monospace, MesloLGS NF, Noto Color Emoji",
+  "terminal.integrated.defaultProfile.windows": "PowerShell",
+  "terminal.integrated.defaultProfile.linux": "zsh",
   "terminal.integrated.fontSize": 14,
-  "terminal.integrated.fontWeight": "normal",
-  "terminal.integrated.fontWeightBold": "bold",
   "terminal.integrated.cursorBlinking": true,
   "terminal.integrated.scrollback": 10000,
   "breadcrumbs.enabled": true,
-
   "typescript.updateImportsOnFileMove.enabled": "always"
 }
