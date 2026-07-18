@@ -37,4 +37,16 @@ foreach ($forbidden in @('refs/heads', "Branch = 'main'", 'Branch = "main"')) {
     }
 }
 
+$readme = Get-Content -LiteralPath (Join-Path $projectRoot 'README.md') -Raw
+foreach ($required in @('c8c8d8d8a5ec4579a469719e0735fd42172cc1f3', 'c00cda95717cead331b1784f773df96557c174b5da2b5adfd5d370dfa8a22457')) {
+    if (-not $readme.Contains($required)) {
+        throw "README.md is missing the pinned bootstrap value: $required"
+    }
+}
+foreach ($forbidden in @('raw.githubusercontent.com/heronimfilho/env-setup/main/bootstrap.ps1', 'irm ', '| iex')) {
+    if ($readme.Contains($forbidden)) {
+        throw "README.md contains an unsafe bootstrap pattern: $forbidden"
+    }
+}
+
 Write-Host 'Entrypoint tests passed.'
