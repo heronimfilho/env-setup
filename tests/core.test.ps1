@@ -5,12 +5,36 @@ $ErrorActionPreference = 'Stop'
 
 $projectRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $projectRoot 'src/EnvSetup.Core.ps1')
+. (Join-Path $projectRoot 'src/EnvSetup.Lock.ps1')
 
 $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("env-setup-tests-{0}" -f [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
 
 try {
     $paths = Initialize-EnvSetupStorage -RootPath $tempRoot
+
+    Write-JsonFileAtomic -Value ([pscustomobject]@{ processId = 2147483647 }) -Path $paths.LockPath
+    Enter-EnvSetupLock -Paths $paths
+    $activeLock = Read-JsonFile -Path $paths.LockPath
+    if ([int]$activeLock.processId -ne $PID) {
+        throw 'A stale setup lock was not replaced.'
+    }
+
+    $secondLockFailed = $false
+    try {
+        Enter-EnvSetupLock -Paths $paths
+    }
+    catch {
+        $secondLockFailed = $true
+    }
+    if (-not $secondLockFailed) {
+        throw 'A concurrent setup lock was accepted.'
+    }
+    Exit-EnvSetupLock -Paths $paths
+    if (Test-Path -LiteralPath $paths.LockPath) {
+        throw 'The setup lock was not removed.'
+    }
+
     $state = New-EnvSetupState
     $marker = Join-Path $tempRoot 'marker.txt'
 
