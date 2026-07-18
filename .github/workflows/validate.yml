@@ -91,5 +91,14 @@ jobs:
         run: |
           head_sha="${PR_HEAD_SHA:-$GITHUB_SHA}"
           curl -fsSL "https://codeload.github.com/${GITHUB_REPOSITORY}/zip/${head_sha}" -o /tmp/env-setup.zip
-          printf 'archive_commit=%s\n' "$head_sha"
-          sha256sum /tmp/env-setup.zip
+          checksum="$(sha256sum /tmp/env-setup.zip | awk '{print $1}')"
+          printf '{"commit":"%s","sha256":"%s"}\n' "$head_sha" "$checksum" > /tmp/archive-checksum.json
+          cat /tmp/archive-checksum.json
+
+      - name: Upload immutable archive checksum
+        uses: actions/upload-artifact@v4
+        with:
+          name: immutable-archive-checksum
+          path: /tmp/archive-checksum.json
+          if-no-files-found: error
+          retention-days: 7
