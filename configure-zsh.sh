@@ -18,10 +18,15 @@ if ! command -v sudo >/dev/null 2>&1; then
   exit 1
 fi
 
-sudo -v
+sudo_command=(sudo)
+if [[ "${ENV_SETUP_NONINTERACTIVE:-0}" == "1" ]]; then
+  sudo_command+=(-n)
+fi
 
-sudo apt-get update
-sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y \
+"${sudo_command[@]}" -v
+
+"${sudo_command[@]}" apt-get update
+"${sudo_command[@]}" env DEBIAN_FRONTEND=noninteractive apt-get install -y \
   ca-certificates \
   curl \
   git \
@@ -169,7 +174,7 @@ zsh_path="$(command -v zsh)"
 current_shell="$(getent passwd "$(id -un)" | cut -d: -f7)"
 
 if [[ "${current_shell}" != "${zsh_path}" ]]; then
-  sudo chsh -s "${zsh_path}" "$(id -un)"
+  "${sudo_command[@]}" chsh -s "${zsh_path}" "$(id -un)"
 fi
 
 echo "Zsh configured."
