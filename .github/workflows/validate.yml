@@ -45,6 +45,10 @@ jobs:
         shell: powershell
         run: .\tests\git.test.ps1
 
+      - name: Run Visual Studio Code tests
+        shell: powershell
+        run: .\tests\vscode.test.ps1
+
   shell:
     runs-on: ubuntu-latest
 
@@ -58,4 +62,7 @@ jobs:
         run: bash tests/configure-zsh.test.sh
 
       - name: Validate JSON
-        run: python -m json.tool vscode.settings.json > /dev/null
+        run: |
+          find . -name '*.json' -print0 | while IFS= read -r -d '' file; do
+            python -m json.tool "$file" > /dev/null
+          done
