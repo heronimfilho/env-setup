@@ -10,9 +10,7 @@ $previousLocalAppData = $env:LOCALAPPDATA
 New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
 
 function global:winget.exe {
-    param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments)
     $global:LASTEXITCODE = 0
-    Write-Output '7zip.7zip'
 }
 
 try {
@@ -20,10 +18,10 @@ try {
         $dataPath = Join-Path $tempRoot $mode.ToLowerInvariant()
         $env:LOCALAPPDATA = $dataPath
         if ($mode -eq 'Check') {
-            & $setupPath -Include windows.7zip -Check -NonInteractive
+            & $setupPath -Include windows.show-extensions -Check -NonInteractive
         }
         else {
-            & $setupPath -Include windows.7zip -DryRun -NonInteractive
+            & $setupPath -Include windows.show-extensions -DryRun -NonInteractive
         }
 
         if (Test-Path -LiteralPath (Join-Path $dataPath 'env-setup')) {
@@ -32,7 +30,7 @@ try {
     }
 
     $configPath = Join-Path $tempRoot 'minimal.json'
-    [System.IO.File]::WriteAllText($configPath, '{"selectedTasks":["windows.7zip"]}', [System.Text.UTF8Encoding]::new($false))
+    [System.IO.File]::WriteAllText($configPath, '{"selectedTasks":["windows.show-extensions"]}', [System.Text.UTF8Encoding]::new($false))
     $configDataPath = Join-Path $tempRoot 'config'
     $env:LOCALAPPDATA = $configDataPath
     & $setupPath -Config $configPath -Check -NonInteractive
@@ -61,7 +59,7 @@ try {
     Write-Host 'Setup integration tests passed.'
 }
 finally {
-    Remove-Item Function:\global:winget.exe -ErrorAction SilentlyContinue
+    Remove-Item Function:\winget.exe -ErrorAction SilentlyContinue
     $env:LOCALAPPDATA = $previousLocalAppData
     Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
