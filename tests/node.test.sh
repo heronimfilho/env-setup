@@ -17,6 +17,8 @@ create_mocks() {
   cat > "${mock_bin}/sudo" <<'EOF'
 #!/usr/bin/env bash
 set -Eeuo pipefail
+printf '%s\n' "$*" >> "${HOME}/sudo-calls.log"
+if [[ "${1:-}" == "-n" ]]; then shift; fi
 if [[ "${1:-}" == "-v" ]]; then exit 0; fi
 if [[ "${1:-}" == "env" ]]; then
   shift
@@ -102,6 +104,23 @@ test_idempotent_node_setup() {
   assert_count 2 "alias default lts/*" "${home}/nvm-calls.log"
 }
 
+test_noninteractive_uses_non_prompting_sudo() {
+  local test_root="${TEMP_ROOT}/noninteractive"
+  local mock_bin="${test_root}/bin"
+  local home="${test_root}/home"
+
+  mkdir -p "${home}"
+  create_mocks "${mock_bin}"
+  create_fake_nvm "${home}"
+
+  ENV_SETUP_NONINTERACTIVE=1 PATH="${mock_bin}:${PATH}" HOME="${home}" \
+    bash "${PROJECT_ROOT}/install-node.sh"
+
+  grep -Fxq -- '-n -v' "${home}/sudo-calls.log"
+  grep -Fxq -- '-n apt-get update' "${home}/sudo-calls.log"
+}
+
 test_idempotent_node_setup
+test_noninteractive_uses_non_prompting_sudo
 
 echo "Node setup tests passed."
