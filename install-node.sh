@@ -19,9 +19,14 @@ if ! command -v sudo >/dev/null 2>&1; then
   exit 1
 fi
 
-sudo -v
-sudo apt-get update
-sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y \
+sudo_command=(sudo)
+if [[ "${ENV_SETUP_NONINTERACTIVE:-0}" == "1" ]]; then
+  sudo_command+=(-n)
+fi
+
+"${sudo_command[@]}" -v
+"${sudo_command[@]}" apt-get update
+"${sudo_command[@]}" env DEBIAN_FRONTEND=noninteractive apt-get install -y \
   ca-certificates \
   curl \
   git
