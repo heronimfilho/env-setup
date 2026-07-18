@@ -21,10 +21,14 @@ $ErrorActionPreference = 'Stop'
 
 . (Join-Path $PSScriptRoot 'src/EnvSetup.Core.ps1')
 . (Join-Path $PSScriptRoot 'src/EnvSetup.Windows.ps1')
+. (Join-Path $PSScriptRoot 'src/EnvSetup.Git.ps1')
 
 $paths = Initialize-EnvSetupStorage
 $state = Read-JsonFile -Path $paths.StatePath -DefaultValue (New-EnvSetupState)
-$tasks = @(Get-WindowsPackageTasks)
+$tasks = @(
+    Get-WindowsPackageTasks
+    Get-GitTasks
+)
 
 $context = [pscustomobject]@{
     Paths           = $paths
@@ -76,7 +80,7 @@ else {
             Id       = $task.Id
             Label    = "$($task.Category): $($task.Name)"
             Selected = [bool]$task.Default
-            Status   = if ($installed) { 'installed' } else { '' }
+            Status   = if ($installed) { 'configured' } else { '' }
         }
     }
 
@@ -93,6 +97,25 @@ $knownTaskIds = @($tasks | ForEach-Object { $_.Id })
 $unknownTaskIds = @($selectedTaskIds | Where-Object { $_ -notin $knownTaskIds })
 if ($unknownTaskIds.Count -gt 0) {
     throw "Unknown task IDs: $($unknownTaskIds -join ', ')"
+}
+
+$requiresGitIdentity = @($selectedTaskIds | Where-Object { $_ -in @('git.windows-config', 'ssh.windows-key', 'ssh.github-upload') }).Count -gt 0
+if ($requiresGitIdentity) {
+    if ([string]::IsNullOrWhiteSpace($context.Options.GitName)) {
+        $context.Options.GitName = Get-GitConfigValue -Key 'user.name'
+    }
+    if ([string]::IsNullOrWhiteSpace($context.Options.GitEmail)) {
+        $context.Options.GitEmail = Get-GitConfigValue -Key 'user.email'
+    }
+
+    $canPrompt = -not $NonInteractive -and -not [Console]::IsInputRedirected
+    if ($canPrompt) {
+        $context.Options.GitName = Read-RequiredValue -Prompt 'Git user name' -DefaultValue $context.Options.GitName
+        $context.Options.GitEmail = Read-RequiredValue -Prompt 'Git email' -DefaultValue $context.Options.GitEmail
+    }
+    elseif ([string]::IsNullOrWhiteSpace($context.Options.GitName) -or [string]::IsNullOrWhiteSpace($context.Options.GitEmail)) {
+        throw 'Git identity is required. Provide -GitName and -GitEmail.'
+    }
 }
 
 $plan = [pscustomobject]@{
