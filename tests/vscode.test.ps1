@@ -23,10 +23,25 @@ if ($parsed.url -ne 'https://example.com/path') { throw 'JSONC string parsing fa
 if (-not $parsed.nested.enabled) { throw 'JSONC object parsing failed.' }
 if (@($parsed.items).Count -ne 2) { throw 'JSONC trailing comma parsing failed.' }
 
-$actual = [pscustomobject]@{ existing = 'preserved'; setting = 'old' }
-$expected = [pscustomobject]@{ setting = 'new'; nested = [pscustomobject]@{ value = 1 } }
+$actual = [pscustomobject]@{
+    existing = 'preserved'
+    setting = 'old'
+    nested = [pscustomobject]@{
+        preserved = 'keep'
+        replace = 'old'
+    }
+}
+$expected = [pscustomobject]@{
+    setting = 'new'
+    nested = [pscustomobject]@{
+        replace = 'new'
+        added = 1
+    }
+}
 $merged = Set-ObjectProperties -Target $actual -Source $expected
 if ($merged.existing -ne 'preserved' -or $merged.setting -ne 'new') { throw 'Settings merge failed.' }
+if ($merged.nested.preserved -ne 'keep') { throw 'Nested settings were not preserved.' }
+if ($merged.nested.replace -ne 'new' -or $merged.nested.added -ne 1) { throw 'Nested settings were not merged.' }
 if (-not (Test-ObjectContainsProperties -Actual $merged -Expected $expected)) { throw 'Settings comparison failed.' }
 
 $manifest = Get-Content -LiteralPath (Join-Path $projectRoot 'config/vscode.extensions.json') -Raw | ConvertFrom-Json
