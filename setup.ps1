@@ -30,8 +30,16 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'src/EnvSetup.Shell.ps1')
 . (Join-Path $PSScriptRoot 'src/EnvSetup.WindowsSettings.ps1')
 
-$paths = Initialize-EnvSetupStorage
-Enter-EnvSetupLock -Paths $paths
+if ($Check -and $DryRun) {
+    throw 'Use either -Check or -DryRun, not both.'
+}
+if ($Repair -and ($Check -or $DryRun)) {
+    throw '-Repair cannot be combined with -Check or -DryRun.'
+}
+
+$readOnly = [bool]($Check -or $DryRun)
+$paths = Initialize-EnvSetupStorage -ReadOnly:$readOnly
+Enter-EnvSetupLock -Paths $paths -ReadOnly:$readOnly
 
 try {
     $state = Read-JsonFile -Path $paths.StatePath -DefaultValue (New-EnvSetupState)
@@ -72,15 +80,17 @@ try {
     if (-not [string]::IsNullOrWhiteSpace($Config)) {
         $configPath = (Resolve-Path -LiteralPath $Config -ErrorAction Stop).Path
         $requestedPlan = Read-JsonFile -Path $configPath
-        if ($null -eq $requestedPlan -or $null -eq $requestedPlan.selectedTasks) {
-            throw 'The configuration file must contain a selectedTasks array.'
+        if ($null -eq $requestedPlan) {
+            throw 'The configuration file is empty.'
         }
+        Assert-SetupPlanSchema -Plan $requestedPlan
     }
 
     if ($Resume) {
         if ($null -eq $existingPlan) {
             throw 'No saved setup plan was found.'
         }
+        Assert-SetupPlanSchema -Plan $existingPlan
         $requestedPlan = $existingPlan
         $selectedTaskIds = @($existingPlan.selectedTasks)
     }
@@ -118,15 +128,38 @@ try {
         $selectedTaskIds = Show-MultiSelectMenu -Title 'Select the components to install and configure' -Items $menuItems
     }
 
-    if ($null -ne $requestedPlan -and $null -ne $requestedPlan.options) {
-        if (-not $PSBoundParameters.ContainsKey('GitName')) { $context.Options.GitName = $requestedPlan.options.GitName }
-        if (-not $PSBoundParameters.ContainsKey('GitEmail')) { $context.Options.GitEmail = $requestedPlan.options.GitEmail }
-        if (-not $PSBoundParameters.ContainsKey('WslDistribution') -and -not [string]::IsNullOrWhiteSpace($requestedPlan.options.WslDistribution)) {
-            $context.Options.WslDistribution = $requestedPlan.options.WslDistribution
+    if ($null -ne $requestedPlan) {
+        $requestedOptions = Get-OptionalPropertyValue -Object $requestedPlan -Name 'options'
+        if ($null -ne $requestedOptions) {
+            if (-not $PSBoundParameters.ContainsKey('GitName')) {
+                $context.Options.GitName = Get-OptionalPropertyValue -Object $requestedOptions -Name 'GitName' -DefaultValue $context.Options.GitName
+            }
+            if (-not $PSBoundParameters.ContainsKey('GitEmail')) {
+                $context.Options.GitEmail = Get-OptionalPropertyValue -Object $requestedOptions -Name 'GitEmail' -DefaultValue $context.Options.GitEmail
+            }
+            if (-not $PSBoundParameters.ContainsKey('WslDistribution')) {
+                $requestedDistribution = Get-OptionalPropertyValue -Object $requestedOptions -Name 'WslDistribution'
+                if (-not [string]::IsNullOrWhiteSpace([string]$requestedDistribution)) {
+                    $context.Options.WslDistribution = [string]$requestedDistribution
+                }
+            }
+            if (-not $PSBoundParameters.ContainsKey('WslWebDownload')) {
+                $requestedWebDownload = Get-OptionalPropertyValue -Object $requestedOptions -Name 'WslWebDownload'
+                if ($null -ne $requestedWebDownload) {
+                    $context.Options.WslWebDownload = [bool]$requestedWebDownload
+                }
+            }
         }
-        if (-not $PSBoundParameters.ContainsKey('WslWebDownload') -and $null -ne $requestedPlan.options.WslWebDownload) {
-            $context.Options.WslWebDownload = [bool]$requestedPlan.options.WslWebDownload
-        }
+    }
+
+    $knownTaskIds = @($tasks | ForEach-Object { $_.Id })
+    $unknownTaskIds = @($selectedTaskIds | Where-Object { $_ -notin $knownTaskIds })
+    $unknownExclusions = @($Exclude | Where-Object { $_ -notin $knownTaskIds })
+    if ($unknownTaskIds.Count -gt 0) {
+        throw "Unknown task IDs: $($unknownTaskIds -join ', ')"
+    }
+    if ($unknownExclusions.Count -gt 0) {
+        throw "Unknown excluded task IDs: $($unknownExclusions -join ', ')"
     }
 
     $selectedTaskIds = @($selectedTaskIds | Where-Object { $_ -notin $Exclude } | Select-Object -Unique)
@@ -135,13 +168,8 @@ try {
         return
     }
 
-    $knownTaskIds = @($tasks | ForEach-Object { $_.Id })
-    $unknownTaskIds = @($selectedTaskIds | Where-Object { $_ -notin $knownTaskIds })
-    if ($unknownTaskIds.Count -gt 0) {
-        throw "Unknown task IDs: $($unknownTaskIds -join ', ')"
-    }
-
     $orderedTaskIds = Resolve-TaskOrder -Tasks $tasks -SelectedTaskIds $selectedTaskIds
+    Assert-NoExcludedTaskDependencies -OrderedTaskIds $orderedTaskIds -ExcludedTaskIds $Exclude
 
     $requiresGitIdentity = @($orderedTaskIds | Where-Object {
         $_ -in @('git.windows-config', 'git.wsl-config', 'ssh.windows-key', 'ssh.github-upload')
@@ -201,7 +229,9 @@ try {
         selectedTasks = $selectedTaskIds
         options       = $context.Options
     }
-    Write-JsonFileAtomic -Value $plan -Path $paths.PlanPath
+    if (-not $readOnly) {
+        Write-JsonFileAtomic -Value $plan -Path $paths.PlanPath
+    }
 
     Write-SetupMessage -Message "Selected tasks: $($selectedTaskIds.Count)" -Level Info
     if ($DryRun) { Write-SetupMessage -Message 'Dry-run mode is enabled.' -Level Muted }
