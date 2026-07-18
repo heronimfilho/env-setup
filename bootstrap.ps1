@@ -12,7 +12,7 @@ $ErrorActionPreference = 'Stop'
 if (Test-Path -LiteralPath (Join-Path $Destination 'setup.ps1') -PathType Leaf) {
     Write-Host "Using the existing env-setup directory: $Destination" -ForegroundColor Cyan
     & (Join-Path $Destination 'setup.ps1')
-    exit $LASTEXITCODE
+    return
 }
 
 if (Test-Path -LiteralPath $Destination) {
@@ -45,4 +45,3 @@ finally {
 }
 
 & (Join-Path $Destination 'setup.ps1')
-exit $LASTEXITCODE
