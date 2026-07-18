@@ -5,6 +5,7 @@ $ErrorActionPreference = 'Stop'
 
 $projectRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $projectRoot 'src/EnvSetup.Core.ps1')
+. (Join-Path $projectRoot 'src/EnvSetup.Selection.ps1')
 . (Join-Path $projectRoot 'src/EnvSetup.Lock.ps1')
 
 $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("env-setup-tests-{0}" -f [guid]::NewGuid().ToString('N'))
@@ -58,6 +59,68 @@ try {
     }
     if (-not $schemaFailed) {
         throw 'An unsupported plan schema version was accepted.'
+    }
+
+    $invalidSavedPlan = Get-ValidatedSavedSetupPlan -Plan ([pscustomobject]@{ schemaVersion = 2; selectedTasks = @('test.success') })
+    if ($null -ne $invalidSavedPlan) {
+        throw 'An invalid saved plan was accepted as an interactive preference.'
+    }
+
+    $menuTasks = @(
+        [pscustomobject]@{
+            Id = 'test.default'; Name = 'Default task'; Category = 'Tests'; Default = $true
+            Detect = { param($Context) $true }
+        },
+        [pscustomobject]@{
+            Id = 'test.optional'; Name = 'Optional task'; Category = 'Tests'; Default = $false
+            Detect = { param($Context) $false }
+        }
+    )
+    $savedMenuPlan = [pscustomobject]@{
+        selectedTasks = @('test.optional')
+        options = [pscustomobject]@{
+            GitName = 'Saved Developer'
+            GitEmail = 'saved@example.com'
+            WslDistribution = 'Debian'
+            WslWebDownload = $true
+        }
+    }
+    $savedMenuItems = Get-InteractiveTaskMenuItems -Tasks $menuTasks -Context ([pscustomobject]@{}) -SavedPlan $savedMenuPlan
+    if (($savedMenuItems | Where-Object Id -eq 'test.default').Selected) {
+        throw 'A previously deselected default task was selected again.'
+    }
+    if (-not ($savedMenuItems | Where-Object Id -eq 'test.optional').Selected) {
+        throw 'A previously selected optional task was not restored.'
+    }
+    if (($savedMenuItems | Where-Object Id -eq 'test.default').Status -ne 'configured') {
+        throw 'Interactive menu task status detection failed.'
+    }
+
+    $defaultMenuItems = Get-InteractiveTaskMenuItems -Tasks $menuTasks -Context ([pscustomobject]@{}) -SavedPlan $null
+    if (-not ($defaultMenuItems | Where-Object Id -eq 'test.default').Selected) {
+        throw 'Default selections were not used without a saved plan.'
+    }
+    if (($defaultMenuItems | Where-Object Id -eq 'test.optional').Selected) {
+        throw 'An optional task was selected without a saved plan.'
+    }
+
+    $preferenceContext = [pscustomobject]@{
+        Options = [pscustomobject]@{
+            GitName = $null
+            GitEmail = $null
+            WslDistribution = 'Ubuntu-24.04'
+            WslWebDownload = $false
+        }
+    }
+    Set-SetupOptionsFromPlan -Context $preferenceContext -Plan $savedMenuPlan -ExplicitOptionNames @('WslDistribution')
+    if ($preferenceContext.Options.GitName -ne 'Saved Developer' -or $preferenceContext.Options.GitEmail -ne 'saved@example.com') {
+        throw 'Saved Git identity options were not restored.'
+    }
+    if ($preferenceContext.Options.WslDistribution -ne 'Ubuntu-24.04') {
+        throw 'An explicit WSL distribution was overwritten by saved preferences.'
+    }
+    if (-not $preferenceContext.Options.WslWebDownload) {
+        throw 'The saved WSL web-download preference was not restored.'
     }
 
     $state = New-EnvSetupState
