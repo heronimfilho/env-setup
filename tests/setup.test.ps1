@@ -18,10 +18,10 @@ try {
         $dataPath = Join-Path $tempRoot $mode.ToLowerInvariant()
         $env:LOCALAPPDATA = $dataPath
         if ($mode -eq 'Check') {
-            & $setupPath -Include windows.show-extensions -Check -NonInteractive
+            & $setupPath -Include windows.powershell,windows.show-extensions -Check -NonInteractive
         }
         else {
-            & $setupPath -Include windows.show-extensions -DryRun -NonInteractive
+            & $setupPath -Include windows.powershell,windows.show-extensions -DryRun -NonInteractive
         }
 
         if (Test-Path -LiteralPath (Join-Path $dataPath 'env-setup')) {
