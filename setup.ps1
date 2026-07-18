@@ -22,15 +22,18 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'src/EnvSetup.Core.ps1')
 . (Join-Path $PSScriptRoot 'src/EnvSetup.Windows.ps1')
 . (Join-Path $PSScriptRoot 'src/EnvSetup.Git.ps1')
+. (Join-Path $PSScriptRoot 'src/EnvSetup.VSCode.ps1')
 
 $paths = Initialize-EnvSetupStorage
 $state = Read-JsonFile -Path $paths.StatePath -DefaultValue (New-EnvSetupState)
 $tasks = @(
     Get-WindowsPackageTasks
     Get-GitTasks
+    Get-VSCodeTasks
 )
 
 $context = [pscustomobject]@{
+    ProjectRoot     = $PSScriptRoot
     Paths           = $paths
     State           = $state
     Check           = [bool]$Check
@@ -75,12 +78,12 @@ else {
     }
 
     $menuItems = foreach ($task in $tasks) {
-        $installed = [bool](& $task.Detect $context)
+        $configured = [bool](& $task.Detect $context)
         [pscustomobject]@{
             Id       = $task.Id
             Label    = "$($task.Category): $($task.Name)"
             Selected = [bool]$task.Default
-            Status   = if ($installed) { 'configured' } else { '' }
+            Status   = if ($configured) { 'configured' } else { '' }
         }
     }
 
