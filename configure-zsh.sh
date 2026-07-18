@@ -6,6 +6,7 @@ readonly OH_MY_ZSH_DIR="${HOME}/.oh-my-zsh"
 readonly ZSH_CUSTOM_DIR="${ZSH_CUSTOM:-${OH_MY_ZSH_DIR}/custom}"
 readonly DRACULA_DIR="${ZSH_CUSTOM_DIR}/themes/dracula"
 readonly ZSHRC="${HOME}/.zshrc"
+readonly ZSH_BACKUP_DIR="${HOME}/.env-setup/backups"
 
 if [[ "$(id -u)" -eq 0 ]]; then
   echo "Do not run this setup as root." >&2
@@ -45,6 +46,95 @@ install_or_update_repository() {
   git clone --depth 1 "${repository_url}" "${target_directory}"
 }
 
+backup_zshrc() {
+  if [[ ! -f "${ZSHRC}" ]]; then
+    return
+  fi
+
+  mkdir -p "${ZSH_BACKUP_DIR}"
+  cp "${ZSHRC}" "${ZSH_BACKUP_DIR}/zshrc-$(date +%Y%m%d-%H%M%S)-$$.bak"
+}
+
+get_existing_plugins() {
+  awk '
+    BEGIN { in_plugins = 0 }
+    {
+      line = $0
+      sub(/[[:space:]]*#.*/, "", line)
+
+      if (!in_plugins && line ~ /^[[:space:]]*plugins[[:space:]]*=\(/) {
+        in_plugins = 1
+        sub(/^[^(]*\(/, "", line)
+      }
+
+      if (in_plugins) {
+        if (line ~ /\)/) {
+          sub(/\).*/, "", line)
+          print line
+          exit
+        }
+        print line
+      }
+    }
+  ' "${ZSHRC}"
+}
+
+configure_plugins() {
+  local existing_plugins
+  local plugin
+  local plugins_line
+  local temporary_file
+  local -a merged_plugins=()
+  local -a required_plugins=(
+    git
+    sudo
+    extract
+    colored-man-pages
+    zsh-autosuggestions
+    zsh-syntax-highlighting
+  )
+  declare -A seen_plugins=()
+
+  existing_plugins="$(get_existing_plugins)"
+  for plugin in ${existing_plugins}; do
+    plugin="${plugin//\"/}"
+    plugin="${plugin//\'/}"
+    [[ -z "${plugin}" || -n "${seen_plugins[${plugin}]:-}" ]] && continue
+    merged_plugins+=("${plugin}")
+    seen_plugins["${plugin}"]=1
+  done
+
+  for plugin in "${required_plugins[@]}"; do
+    [[ -n "${seen_plugins[${plugin}]:-}" ]] && continue
+    merged_plugins+=("${plugin}")
+    seen_plugins["${plugin}"]=1
+  done
+
+  plugins_line="plugins=(${merged_plugins[*]})"
+  if grep -Eq '^[[:space:]]*plugins[[:space:]]*=\(' "${ZSHRC}"; then
+    temporary_file="$(mktemp)"
+    awk -v replacement="${plugins_line}" '
+      BEGIN { skipping = 0 }
+      {
+        if (!skipping && $0 ~ /^[[:space:]]*plugins[[:space:]]*=\(/) {
+          print replacement
+          if ($0 !~ /\)/) { skipping = 1 }
+          next
+        }
+        if (skipping) {
+          if ($0 ~ /\)/) { skipping = 0 }
+          next
+        }
+        print
+      }
+    ' "${ZSHRC}" > "${temporary_file}"
+    cat "${temporary_file}" > "${ZSHRC}"
+    rm -f "${temporary_file}"
+  else
+    printf '\n%s\n' "${plugins_line}" >> "${ZSHRC}"
+  fi
+}
+
 install_or_update_repository \
   "https://github.com/dracula/zsh.git" \
   "${DRACULA_DIR}"
@@ -65,19 +155,15 @@ if [[ ! -f "${ZSHRC}" ]]; then
   cp "${OH_MY_ZSH_DIR}/templates/zshrc.zsh-template" "${ZSHRC}"
 fi
 
+backup_zshrc
+
 if grep -q '^ZSH_THEME=' "${ZSHRC}"; then
   sed -i 's|^ZSH_THEME=.*|ZSH_THEME="dracula"|' "${ZSHRC}"
 else
   printf '\nZSH_THEME="dracula"\n' >> "${ZSHRC}"
 fi
 
-plugins_line='plugins=(git sudo extract colored-man-pages zsh-autosuggestions zsh-syntax-highlighting)'
-
-if grep -q '^plugins=(' "${ZSHRC}"; then
-  sed -i "s|^plugins=(.*)|${plugins_line}|" "${ZSHRC}"
-else
-  printf '\n%s\n' "${plugins_line}" >> "${ZSHRC}"
-fi
+configure_plugins
 
 zsh_path="$(command -v zsh)"
 current_shell="$(getent passwd "$(id -un)" | cut -d: -f7)"
@@ -88,5 +174,5 @@ fi
 
 echo "Zsh configured."
 echo "Theme: dracula"
-echo "Plugins: git sudo extract colored-man-pages zsh-autosuggestions zsh-syntax-highlighting"
+echo "Required plugins were added without removing existing plugins."
 echo "Open a new WSL session or run: exec zsh"
