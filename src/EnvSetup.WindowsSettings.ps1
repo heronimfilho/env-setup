@@ -1,5 +1,7 @@
 Set-StrictMode -Version Latest
 
+. (Join-Path $PSScriptRoot 'EnvSetup.TaskFactories.ps1')
+
 function Test-RegistryDwordValue {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
