@@ -2,10 +2,12 @@
 
 set -Eeuo pipefail
 
-readonly NVM_VERSION="${NVM_VERSION:-v0.40.4}"
-readonly NVM_DIR="${NVM_DIR:-${HOME}/.nvm}"
+readonly ENV_SETUP_NVM_VERSION="${ENV_SETUP_NVM_VERSION:-v0.40.4}"
 readonly NVM_BLOCK_START="# >>> env-setup nvm >>>"
 readonly NVM_BLOCK_END="# <<< env-setup nvm <<<"
+
+unset NVM_BIN NVM_INC NODE_PATH
+export NVM_DIR="${HOME}/.nvm"
 
 if [[ "$(id -u)" -eq 0 ]]; then
   echo "Do not run this setup as root." >&2
@@ -25,9 +27,9 @@ sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y \
   git
 
 if [[ ! -s "${NVM_DIR}/nvm.sh" ]]; then
-  echo "Installing NVM ${NVM_VERSION}..."
+  echo "Installing NVM ${ENV_SETUP_NVM_VERSION}..."
   PROFILE=/dev/null NVM_DIR="${NVM_DIR}" bash -c \
-    "$(curl -fsSL "https://raw.githubusercontent.com/nvm-sh/nvm/${NVM_VERSION}/install.sh")"
+    "$(curl -fsSL "https://raw.githubusercontent.com/nvm-sh/nvm/${ENV_SETUP_NVM_VERSION}/install.sh")"
 fi
 
 if [[ ! -s "${NVM_DIR}/nvm.sh" ]]; then
@@ -99,7 +101,7 @@ if ! command -v npm >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "NVM ${NVM_VERSION} configured."
+echo "NVM ${ENV_SETUP_NVM_VERSION} configured."
 echo "Node.js: $(node --version)"
 echo "npm: $(npm --version)"
 echo "Default Node.js alias: lts/*"
