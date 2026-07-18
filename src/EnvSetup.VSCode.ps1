@@ -107,6 +107,293 @@ function ConvertFrom-Jsonc {
     return $withoutTrailingCommas.ToString() | ConvertFrom-Json
 }
 
+function Get-JsoncSignificantIndex {
+    param(
+        [Parameter(Mandatory = $true)][string]$Content,
+        [Parameter(Mandatory = $true)][int]$Index,
+        [int]$Limit = $Content.Length
+    )
+
+    while ($Index -lt $Limit) {
+        if ([char]::IsWhiteSpace($Content[$Index])) {
+            $Index++
+            continue
+        }
+
+        if ($Content[$Index] -eq '/' -and $Index + 1 -lt $Limit) {
+            if ($Content[$Index + 1] -eq '/') {
+                $Index += 2
+                while ($Index -lt $Limit -and $Content[$Index] -ne "`n") { $Index++ }
+                continue
+            }
+            if ($Content[$Index + 1] -eq '*') {
+                $Index += 2
+                $closed = $false
+                while ($Index + 1 -lt $Limit) {
+                    if ($Content[$Index] -eq '*' -and $Content[$Index + 1] -eq '/') {
+                        $Index += 2
+                        $closed = $true
+                        break
+                    }
+                    $Index++
+                }
+                if (-not $closed) { throw 'Unterminated JSONC block comment.' }
+                continue
+            }
+        }
+
+        return $Index
+    }
+
+    return $Index
+}
+
+function Get-JsoncStringEnd {
+    param(
+        [Parameter(Mandatory = $true)][string]$Content,
+        [Parameter(Mandatory = $true)][int]$StartIndex
+    )
+
+    if ($Content[$StartIndex] -ne '"') { throw 'Expected a JSON string.' }
+    $escaped = $false
+    for ($index = $StartIndex + 1; $index -lt $Content.Length; $index++) {
+        $character = $Content[$index]
+        if ($escaped) {
+            $escaped = $false
+        }
+        elseif ($character -eq '\') {
+            $escaped = $true
+        }
+        elseif ($character -eq '"') {
+            return $index + 1
+        }
+    }
+    throw 'Unterminated JSON string.'
+}
+
+function Get-JsoncCompositeEnd {
+    param(
+        [Parameter(Mandatory = $true)][string]$Content,
+        [Parameter(Mandatory = $true)][int]$StartIndex
+    )
+
+    $opening = $Content[$StartIndex]
+    if ($opening -notin @('{', '[')) { throw 'Expected a JSON object or array.' }
+    $stack = New-Object System.Collections.Generic.Stack[char]
+    $stack.Push($(if ($opening -eq '{') { '}' } else { ']' }))
+    $inString = $false
+    $escaped = $false
+    $lineComment = $false
+    $blockComment = $false
+
+    for ($index = $StartIndex + 1; $index -lt $Content.Length; $index++) {
+        $character = $Content[$index]
+        $next = if ($index + 1 -lt $Content.Length) { $Content[$index + 1] } else { [char]0 }
+
+        if ($lineComment) {
+            if ($character -eq "`n") { $lineComment = $false }
+            continue
+        }
+        if ($blockComment) {
+            if ($character -eq '*' -and $next -eq '/') {
+                $blockComment = $false
+                $index++
+            }
+            continue
+        }
+        if ($inString) {
+            if ($escaped) { $escaped = $false }
+            elseif ($character -eq '\') { $escaped = $true }
+            elseif ($character -eq '"') { $inString = $false }
+            continue
+        }
+
+        if ($character -eq '"') { $inString = $true; continue }
+        if ($character -eq '/' -and $next -eq '/') { $lineComment = $true; $index++; continue }
+        if ($character -eq '/' -and $next -eq '*') { $blockComment = $true; $index++; continue }
+        if ($character -eq '{') { $stack.Push('}'); continue }
+        if ($character -eq '[') { $stack.Push(']'); continue }
+        if ($stack.Count -gt 0 -and $character -eq $stack.Peek()) {
+            [void]$stack.Pop()
+            if ($stack.Count -eq 0) { return $index + 1 }
+        }
+    }
+
+    throw 'Unterminated JSON object or array.'
+}
+
+function Get-JsoncValueEnd {
+    param(
+        [Parameter(Mandatory = $true)][string]$Content,
+        [Parameter(Mandatory = $true)][int]$StartIndex,
+        [int]$Limit = $Content.Length
+    )
+
+    $StartIndex = Get-JsoncSignificantIndex -Content $Content -Index $StartIndex -Limit $Limit
+    if ($StartIndex -ge $Limit) { throw 'A JSON value is missing.' }
+    $character = $Content[$StartIndex]
+    if ($character -eq '"') { return Get-JsoncStringEnd -Content $Content -StartIndex $StartIndex }
+    if ($character -in @('{', '[')) { return Get-JsoncCompositeEnd -Content $Content -StartIndex $StartIndex }
+
+    $index = $StartIndex
+    while ($index -lt $Limit) {
+        $character = $Content[$index]
+        if ([char]::IsWhiteSpace($character) -or $character -in @(',', '}', ']')) { break }
+        if ($character -eq '/' -and $index + 1 -lt $Limit -and $Content[$index + 1] -in @('/', '*')) { break }
+        $index++
+    }
+    if ($index -eq $StartIndex) { throw 'A JSON value is missing.' }
+    return $index
+}
+
+function Get-JsoncObjectBounds {
+    param([Parameter(Mandatory = $true)][string]$Content)
+
+    $start = Get-JsoncSignificantIndex -Content $Content -Index 0
+    if ($start -ge $Content.Length -or $Content[$start] -ne '{') {
+        throw 'The JSONC root must be an object.'
+    }
+    $endExclusive = Get-JsoncCompositeEnd -Content $Content -StartIndex $start
+    return [pscustomobject]@{
+        Start = $start
+        EndExclusive = $endExclusive
+        CloseIndex = $endExclusive - 1
+    }
+}
+
+function Get-JsoncObjectProperties {
+    param([Parameter(Mandatory = $true)][string]$Content)
+
+    $bounds = Get-JsoncObjectBounds -Content $Content
+    $properties = New-Object System.Collections.Generic.List[object]
+    $cursor = Get-JsoncSignificantIndex -Content $Content -Index ($bounds.Start + 1) -Limit $bounds.CloseIndex
+
+    while ($cursor -lt $bounds.CloseIndex) {
+        if ($Content[$cursor] -eq ',') {
+            $cursor = Get-JsoncSignificantIndex -Content $Content -Index ($cursor + 1) -Limit $bounds.CloseIndex
+            continue
+        }
+        if ($Content[$cursor] -ne '"') { throw 'Expected a JSON object property name.' }
+
+        $keyStart = $cursor
+        $keyEnd = Get-JsoncStringEnd -Content $Content -StartIndex $keyStart
+        $name = $Content.Substring($keyStart, $keyEnd - $keyStart) | ConvertFrom-Json
+        $cursor = Get-JsoncSignificantIndex -Content $Content -Index $keyEnd -Limit $bounds.CloseIndex
+        if ($cursor -ge $bounds.CloseIndex -or $Content[$cursor] -ne ':') { throw "Missing colon after JSON property: $name" }
+
+        $valueStart = Get-JsoncSignificantIndex -Content $Content -Index ($cursor + 1) -Limit $bounds.CloseIndex
+        $valueEnd = Get-JsoncValueEnd -Content $Content -StartIndex $valueStart -Limit $bounds.CloseIndex
+        $afterValue = Get-JsoncSignificantIndex -Content $Content -Index $valueEnd -Limit $bounds.CloseIndex
+        $hasFollowingComma = $afterValue -lt $bounds.CloseIndex -and $Content[$afterValue] -eq ','
+
+        $lineStart = $Content.LastIndexOf("`n", [Math]::Max(0, $keyStart - 1))
+        if ($lineStart -lt 0) { $lineStart = 0 } else { $lineStart++ }
+        $indentation = $Content.Substring($lineStart, $keyStart - $lineStart)
+        if ($indentation -notmatch '^\s*$') { $indentation = '' }
+
+        $properties.Add([pscustomobject]@{
+            Name = [string]$name
+            KeyStart = $keyStart
+            ValueStart = $valueStart
+            ValueEnd = $valueEnd
+            ValueText = $Content.Substring($valueStart, $valueEnd - $valueStart)
+            Indentation = $indentation
+            HasFollowingComma = $hasFollowingComma
+        })
+
+        $cursor = if ($hasFollowingComma) { $afterValue + 1 } else { $afterValue }
+        $cursor = Get-JsoncSignificantIndex -Content $Content -Index $cursor -Limit $bounds.CloseIndex
+    }
+
+    return @($properties)
+}
+
+function Format-JsoncValue {
+    param(
+        [Parameter(Mandatory = $true)]$Value,
+        [string]$Indentation = ''
+    )
+
+    $json = ConvertTo-Json -InputObject $Value -Depth 20
+    $newline = if ($json.Contains("`r`n")) { "`r`n" } else { "`n" }
+    $lines = $json -split "`r?`n"
+    if ($lines.Count -le 1) { return $json }
+    return $lines[0] + $newline + (($lines[1..($lines.Count - 1)] | ForEach-Object { $Indentation + $_ }) -join $newline)
+}
+
+function Replace-TextRange {
+    param(
+        [Parameter(Mandatory = $true)][string]$Content,
+        [Parameter(Mandatory = $true)][int]$Start,
+        [Parameter(Mandatory = $true)][int]$End,
+        [Parameter(Mandatory = $true)][string]$Replacement
+    )
+    return $Content.Substring(0, $Start) + $Replacement + $Content.Substring($End)
+}
+
+function Merge-JsoncObjectContent {
+    param(
+        [Parameter(Mandatory = $true)][string]$Content,
+        [Parameter(Mandatory = $true)]$Desired
+    )
+
+    [void](ConvertFrom-Jsonc -Content $Content)
+    $merged = $Content
+
+    foreach ($desiredProperty in $Desired.PSObject.Properties) {
+        $properties = @(Get-JsoncObjectProperties -Content $merged)
+        $existing = @($properties | Where-Object { $_.Name -eq $desiredProperty.Name }) | Select-Object -Last 1
+
+        if ($null -ne $existing) {
+            $actualFirst = Get-JsoncSignificantIndex -Content $existing.ValueText -Index 0
+            if ((Test-IsObjectNode -Value $desiredProperty.Value) -and
+                $actualFirst -lt $existing.ValueText.Length -and
+                $existing.ValueText[$actualFirst] -eq '{') {
+                $replacement = Merge-JsoncObjectContent -Content $existing.ValueText -Desired $desiredProperty.Value
+            }
+            else {
+                $replacement = Format-JsoncValue -Value $desiredProperty.Value -Indentation $existing.Indentation
+            }
+            $merged = Replace-TextRange -Content $merged -Start $existing.ValueStart -End $existing.ValueEnd -Replacement $replacement
+            continue
+        }
+
+        $bounds = Get-JsoncObjectBounds -Content $merged
+        $properties = @(Get-JsoncObjectProperties -Content $merged)
+        if ($properties.Count -gt 0) {
+            $last = $properties[$properties.Count - 1]
+            if (-not $last.HasFollowingComma) {
+                $merged = Replace-TextRange -Content $merged -Start $last.ValueEnd -End $last.ValueEnd -Replacement ','
+                $bounds = Get-JsoncObjectBounds -Content $merged
+                $properties = @(Get-JsoncObjectProperties -Content $merged)
+            }
+        }
+
+        $newline = if ($merged.Contains("`r`n")) { "`r`n" } else { "`n" }
+        $closeIndex = $bounds.CloseIndex
+        $lineStart = $merged.LastIndexOf("`n", [Math]::Max(0, $closeIndex - 1))
+        if ($lineStart -lt 0) { $lineStart = 0 } else { $lineStart++ }
+        $closingIndent = $merged.Substring($lineStart, $closeIndex - $lineStart)
+        $insertIndex = if ($closingIndent -match '^\s*$') { $lineStart } else { $closeIndex }
+        if ($closingIndent -notmatch '^\s*$') { $closingIndent = '' }
+
+        $propertyIndent = if ($properties.Count -gt 0 -and -not [string]::IsNullOrEmpty($properties[0].Indentation)) {
+            $properties[0].Indentation
+        }
+        else {
+            $closingIndent + '  '
+        }
+        $keyJson = ConvertTo-Json -InputObject $desiredProperty.Name -Compress
+        $valueJson = Format-JsoncValue -Value $desiredProperty.Value -Indentation $propertyIndent
+        $prefix = if ($insertIndex -eq $closeIndex -and $closeIndex -gt 0 -and $merged[$closeIndex - 1] -ne "`n") { $newline } else { '' }
+        $insertion = "$prefix$propertyIndent$keyJson`: $valueJson$newline"
+        $merged = Replace-TextRange -Content $merged -Start $insertIndex -End $insertIndex -Replacement $insertion
+    }
+
+    [void](ConvertFrom-Jsonc -Content $merged)
+    return $merged
+}
+
 function Get-CodeCommand {
     $command = Get-Command 'code.cmd' -ErrorAction SilentlyContinue
     if ($null -ne $command) {
@@ -238,15 +525,27 @@ function Set-VSCodeSettings {
         New-Item -ItemType Directory -Path $directory -Force | Out-Null
     }
 
-    $settings = [pscustomobject]@{}
+    $desired = Get-DesiredVSCodeSettings -Context $Context
+    $content = ConvertTo-Json -InputObject $desired -Depth 20
     if (Test-Path -LiteralPath $path -PathType Leaf) {
-        $settings = ConvertFrom-Jsonc -Content (Get-Content -LiteralPath $path -Raw)
-        $backup = Join-Path (Join-Path $Context.Paths.RootPath 'backups') ("vscode-settings-{0}.json" -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
+        $content = Get-Content -LiteralPath $path -Raw
+        $backupDirectory = Join-Path $Context.Paths.RootPath 'backups'
+        if (-not (Test-Path -LiteralPath $backupDirectory)) {
+            New-Item -ItemType Directory -Path $backupDirectory -Force | Out-Null
+        }
+        $backup = Join-Path $backupDirectory ("vscode-settings-{0}-{1}.json" -f (Get-Date -Format 'yyyyMMdd-HHmmss'), $PID)
         Copy-Item -LiteralPath $path -Destination $backup -Force
+        $content = Merge-JsoncObjectContent -Content $content -Desired $desired
     }
 
-    $settings = Set-ObjectProperties -Target $settings -Source (Get-DesiredVSCodeSettings -Context $Context)
-    [System.IO.File]::WriteAllText($path, ($settings | ConvertTo-Json -Depth 20), [System.Text.UTF8Encoding]::new($false))
+    $temporaryPath = "$path.env-setup.$([guid]::NewGuid().ToString('N')).tmp"
+    try {
+        [System.IO.File]::WriteAllText($temporaryPath, $content, [System.Text.UTF8Encoding]::new($false))
+        Move-Item -LiteralPath $temporaryPath -Destination $path -Force
+    }
+    finally {
+        Remove-Item -LiteralPath $temporaryPath -Force -ErrorAction SilentlyContinue
+    }
 }
 
 function Get-VSCodeExtensionGroup {
