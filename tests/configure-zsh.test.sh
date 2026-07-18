@@ -21,7 +21,8 @@ create_mocks() {
   cat > "${mock_bin}/sudo" <<'EOF'
 #!/usr/bin/env bash
 set -Eeuo pipefail
-
+printf '%s\n' "$*" >> "${HOME}/sudo-calls.log"
+if [[ "${1:-}" == "-n" ]]; then shift; fi
 if [[ "${1:-}" == "-v" ]]; then
   exit 0
 fi
@@ -114,6 +115,7 @@ run_setup() {
   local mock_bin="$1"
   local home="$2"
   local git_fail="${3:-0}"
+  local noninteractive="${4:-0}"
 
   env \
     -u ZSH \
@@ -121,6 +123,7 @@ run_setup() {
     PATH="${mock_bin}:${PATH}" \
     HOME="${home}" \
     MOCK_GIT_FAIL="${git_fail}" \
+    ENV_SETUP_NONINTERACTIVE="${noninteractive}" \
     bash "${PROJECT_ROOT}/configure-zsh.sh"
 }
 
@@ -169,6 +172,19 @@ EOF
   test "$(find "${home}/.env-setup/backups" -type f -name 'zshrc-*.bak' | wc -l)" -ge 1
 }
 
+test_noninteractive_uses_non_prompting_sudo() {
+  local test_root="${TEMP_ROOT}/noninteractive"
+  local mock_bin="${test_root}/bin"
+  local home="${test_root}/home"
+
+  mkdir -p "${home}"
+  create_mocks "${mock_bin}"
+  run_setup "${mock_bin}" "${home}" 0 1
+
+  grep -Fxq -- '-n -v' "${home}/sudo-calls.log"
+  grep -Fxq -- '-n apt-get update' "${home}/sudo-calls.log"
+}
+
 test_git_failure_is_reported() {
   local test_root="${TEMP_ROOT}/failure"
   local mock_bin="${test_root}/bin"
@@ -184,6 +200,7 @@ test_git_failure_is_reported() {
 }
 
 test_idempotent_configuration
+test_noninteractive_uses_non_prompting_sudo
 test_git_failure_is_reported
 
 echo "configure-zsh tests passed."
