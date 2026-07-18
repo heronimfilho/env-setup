@@ -74,6 +74,11 @@ if ($installTask.Detect.ToString() -notmatch 'Test-WslDistributionReady') {
     throw 'The WSL install task must validate WSL 2, not only distribution presence.'
 }
 
+$wslGitTask = $tasks | Where-Object { $_.Id -eq 'git.wsl-config' } | Select-Object -First 1
+if ($wslGitTask.Dependencies -notcontains 'windows.vscode') {
+    throw 'WSL Git configuration must depend on Visual Studio Code.'
+}
+
 $nodeTask = $tasks | Where-Object { $_.Id -eq 'wsl.node' } | Select-Object -First 1
 if (-not $nodeTask.Default) {
     throw 'The NVM and Node.js LTS task must be selected by default.'
@@ -84,12 +89,30 @@ foreach ($fragment in @(
     'nvm --version',
     '0.40.4',
     'default -> lts/*',
-    "nvm version 'lts/*'",
+    'nvm version-remote --lts',
+    'current_version',
     'node --version'
 )) {
     if (-not $nodeValidation.Contains($fragment)) {
         throw "Node validation is missing: $fragment"
     }
+}
+
+$packageValidation = Get-WslBasePackageValidationCommand
+foreach ($package in Get-WslBasePackageNames) {
+    if (-not $packageValidation.Contains($package)) {
+        throw "WSL package validation is missing: $package"
+    }
+}
+foreach ($directory in @('$HOME/projects', '$HOME/bin')) {
+    if (-not $packageValidation.Contains($directory)) {
+        throw "WSL directory validation is missing: $directory"
+    }
+}
+
+$quotedHelper = Convert-ToPosixSingleQuotedString -Value '/mnt/c/Program Files (x86)/Git/mingw64/bin/git-credential-manager.exe'
+if ($quotedHelper -ne "'/mnt/c/Program Files (x86)/Git/mingw64/bin/git-credential-manager.exe'") {
+    throw "The WSL GCM helper path was not quoted safely: $quotedHelper"
 }
 
 Write-Host 'WSL task tests passed.'
