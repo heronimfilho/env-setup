@@ -1,5 +1,21 @@
 Set-StrictMode -Version Latest
 
+function Update-ProcessEnvironmentPath {
+    $pathValues = @(
+        [Environment]::GetEnvironmentVariable('Path', 'Machine'),
+        [Environment]::GetEnvironmentVariable('Path', 'User'),
+        $env:Path
+    )
+
+    $entries = @(
+        ($pathValues -join ';') -split ';' |
+            ForEach-Object { $_.Trim() } |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+            Select-Object -Unique
+    )
+    $env:Path = $entries -join ';'
+}
+
 function Test-WingetPackageInstalled {
     param([Parameter(Mandatory = $true)][string]$PackageId)
 
@@ -21,6 +37,7 @@ function Install-WingetPackage {
         'install', '--id', $PackageId, '--exact', '--source', 'winget',
         '--accept-package-agreements', '--accept-source-agreements', '--disable-interactivity'
     ) | Out-Null
+    Update-ProcessEnvironmentPath
 }
 
 function New-WingetTask {
