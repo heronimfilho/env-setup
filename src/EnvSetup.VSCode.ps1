@@ -160,6 +160,14 @@ function Get-DesiredVSCodeSettings {
     return (Get-Content -LiteralPath $path -Raw | ConvertFrom-Json)
 }
 
+function Test-IsObjectNode {
+    param($Value)
+
+    if ($null -eq $Value) { return $false }
+    if ($Value -is [string] -or $Value -is [System.Array]) { return $false }
+    return $Value -is [pscustomobject] -or $Value -is [System.Collections.IDictionary]
+}
+
 function Set-ObjectProperties {
     param(
         [Parameter(Mandatory = $true)]$Target,
@@ -167,6 +175,14 @@ function Set-ObjectProperties {
     )
 
     foreach ($property in $Source.PSObject.Properties) {
+        $targetProperty = $Target.PSObject.Properties[$property.Name]
+        if ($null -ne $targetProperty -and
+            (Test-IsObjectNode -Value $targetProperty.Value) -and
+            (Test-IsObjectNode -Value $property.Value)) {
+            Set-ObjectProperties -Target $targetProperty.Value -Source $property.Value | Out-Null
+            continue
+        }
+
         $Target | Add-Member -NotePropertyName $property.Name -NotePropertyValue $property.Value -Force
     }
     return $Target
@@ -181,6 +197,15 @@ function Test-ObjectContainsProperties {
     foreach ($property in $Expected.PSObject.Properties) {
         $actualProperty = $Actual.PSObject.Properties[$property.Name]
         if ($null -eq $actualProperty) { return $false }
+
+        if ((Test-IsObjectNode -Value $actualProperty.Value) -and
+            (Test-IsObjectNode -Value $property.Value)) {
+            if (-not (Test-ObjectContainsProperties -Actual $actualProperty.Value -Expected $property.Value)) {
+                return $false
+            }
+            continue
+        }
+
         $actualJson = $actualProperty.Value | ConvertTo-Json -Depth 20 -Compress
         $expectedJson = $property.Value | ConvertTo-Json -Depth 20 -Compress
         if ($actualJson -ne $expectedJson) { return $false }
