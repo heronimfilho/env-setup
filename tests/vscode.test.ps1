@@ -6,6 +6,7 @@ $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $projectRoot 'src/EnvSetup.Core.ps1')
 . (Join-Path $projectRoot 'src/EnvSetup.VSCode.ps1')
+. (Join-Path $projectRoot 'src/EnvSetup.TaskFactories.ps1')
 
 $jsonc = @'
 {
@@ -79,6 +80,31 @@ $manifest = Get-Content -LiteralPath (Join-Path $projectRoot 'config/vscode.exte
 foreach ($group in @('base', 'node', 'dotnet', 'delphi', 'devops')) {
     $definition = $manifest.PSObject.Properties[$group].Value
     if (@($definition.extensions).Count -eq 0) { throw "Extension group is empty: $group" }
+}
+
+$script:detectedGroup = $null
+$script:installedGroup = $null
+function Test-VSCodeExtensionGroup {
+    param($Context, [string]$Group)
+    $script:detectedGroup = $Group
+    return $true
+}
+function Install-VSCodeExtensionGroup {
+    param($Context, [string]$Group)
+    $script:installedGroup = $Group
+}
+
+$generatedTask = New-VSCodeExtensionTask -Id 'test.vscode' -Name 'Test extension task' -Group 'node'
+if (-not [bool](& $generatedTask.Detect $null) -or $script:detectedGroup -ne 'node') {
+    throw 'Generated VS Code detection did not execute in the caller scope.'
+}
+& $generatedTask.Apply $null
+if ($script:installedGroup -ne 'node') {
+    throw 'Generated VS Code apply operation did not execute in the caller scope.'
+}
+$script:detectedGroup = $null
+if (-not [bool](& $generatedTask.Verify $null) -or $script:detectedGroup -ne 'node') {
+    throw 'Generated VS Code verification did not execute in the caller scope.'
 }
 
 Write-Host 'VS Code tests passed.'
