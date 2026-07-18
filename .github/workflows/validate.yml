@@ -53,6 +53,10 @@ jobs:
         shell: powershell
         run: .\tests\wsl.test.ps1
 
+      - name: Run shell configuration tests
+        shell: powershell
+        run: .\tests\shell.test.ps1
+
   shell:
     runs-on: ubuntu-latest
 
