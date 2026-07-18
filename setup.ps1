@@ -57,6 +57,7 @@ try {
             GitEmail        = $GitEmail
             WslDistribution = $WslDistribution
             WslWebDownload  = [bool]$WslWebDownload
+            NonInteractive  = [bool]$NonInteractive
         }
     }
 
@@ -164,6 +165,32 @@ try {
     $requiresWsl = @($selectedTaskIds | Where-Object { $_ -like 'wsl.*' -or $_ -like 'git.wsl-*' }).Count -gt 0
     if ($requiresWsl -and -not $NonInteractive -and -not $Resume -and $null -eq $requestedPlan -and -not [Console]::IsInputRedirected) {
         $context.Options.WslDistribution = Read-RequiredValue -Prompt 'WSL distribution' -DefaultValue $context.Options.WslDistribution
+    }
+
+    if ($requiresWsl -and -not (Test-WslDistributionSupported -Distribution $context.Options.WslDistribution)) {
+        $supported = Get-SupportedWslDistributions
+        throw "Unsupported WSL distribution '$($context.Options.WslDistribution)'. Supported distributions: $($supported -join ', ')."
+    }
+
+    if ($NonInteractive) {
+        $taskMap = @{}
+        foreach ($task in $tasks) { $taskMap[$task.Id] = $task }
+        $orderedTaskIds = Resolve-TaskOrder -Tasks $tasks -SelectedTaskIds $selectedTaskIds
+        foreach ($interactiveTaskId in @('github.authenticate', 'ssh.windows-key', 'wsl.initialize')) {
+            if ($orderedTaskIds -notcontains $interactiveTaskId) { continue }
+
+            $configured = $false
+            try {
+                $configured = [bool](& $taskMap[$interactiveTaskId].Detect $context)
+            }
+            catch {
+                $configured = $false
+            }
+
+            if (-not $configured) {
+                throw "Task '$interactiveTaskId' requires interactive input and cannot run with -NonInteractive. Configure it interactively, then resume."
+            }
+        }
     }
 
     $plan = [pscustomobject]@{
