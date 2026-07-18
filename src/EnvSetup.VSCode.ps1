@@ -305,7 +305,7 @@ function Get-JsoncObjectProperties {
         $cursor = Get-JsoncSignificantIndex -Content $Content -Index $cursor -Limit $bounds.CloseIndex
     }
 
-    return @($properties)
+    return $properties.ToArray()
 }
 
 function Format-JsoncValue {
