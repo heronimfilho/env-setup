@@ -1,0 +1,104 @@
+name: Validate
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  powershell:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate PowerShell syntax
+        shell: pwsh
+        run: |
+          $files = Get-ChildItem -Path . -Filter *.ps1 -Recurse
+
+          foreach ($file in $files) {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              $file.FullName,
+              [ref]$tokens,
+              [ref]$errors
+            ) | Out-Null
+
+            if ($errors.Count -gt 0) {
+              $errors | ForEach-Object { Write-Error $_ }
+              exit 1
+            }
+          }
+
+      - name: Run setup core tests
+        shell: powershell
+        run: .\tests\core.test.ps1
+
+      - name: Run setup integration tests
+        shell: powershell
+        run: .\tests\setup.test.ps1
+
+      - name: Run Git configuration tests
+        shell: powershell
+        run: .\tests\git.test.ps1
+
+      - name: Run Visual Studio Code tests
+        shell: powershell
+        run: .\tests\vscode.test.ps1
+
+      - name: Run WSL task tests
+        shell: powershell
+        run: .\tests\wsl.test.ps1
+
+      - name: Run shell configuration tests
+        shell: powershell
+        run: .\tests\shell.test.ps1
+
+      - name: Run entrypoint tests
+        shell: powershell
+        run: .\tests\entrypoints.test.ps1
+
+  shell:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate Bash syntax
+        run: bash -n configure-zsh.sh install-node.sh tests/configure-zsh.test.sh tests/node.test.sh
+
+      - name: Run Zsh setup tests
+        run: bash tests/configure-zsh.test.sh
+
+      - name: Run NVM and Node setup tests
+        run: bash tests/node.test.sh
+
+      - name: Validate JSON
+        run: |
+          find . -name '*.json' -print0 | while IFS= read -r -d '' file; do
+            python -m json.tool "$file" > /dev/null
+          done
+
+      - name: Calculate immutable archive checksum
+        env:
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          head_sha="${PR_HEAD_SHA:-$GITHUB_SHA}"
+          curl -fsSL "https://codeload.github.com/${GITHUB_REPOSITORY}/zip/${head_sha}" -o /tmp/env-setup.zip
+          checksum="$(sha256sum /tmp/env-setup.zip | awk '{print $1}')"
+          printf '{"commit":"%s","sha256":"%s"}\n' "$head_sha" "$checksum" > /tmp/archive-checksum.json
+          cat /tmp/archive-checksum.json
+
+      - name: Upload immutable archive checksum
+        uses: actions/upload-artifact@v4
+        with:
+          name: immutable-archive-checksum
+          path: /tmp/archive-checksum.json
+          if-no-files-found: error
+          retention-days: 7

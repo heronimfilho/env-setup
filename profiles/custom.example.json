@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "selectedTasks": [
+    "windows.git",
+    "windows.github-cli",
+    "git.windows-config",
+    "git.windows-gcm",
+    "windows.vscode",
+    "vscode.settings",
+    "vscode.extensions-base",
+    "wsl.node",
+    "git.wsl-config",
+    "git.wsl-gcm"
+  ],
+  "options": {
+    "GitName": null,
+    "GitEmail": null,
+    "WslDistribution": "Ubuntu",
+    "WslWebDownload": false
+  }
+}
