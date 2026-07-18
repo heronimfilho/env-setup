@@ -11,7 +11,19 @@ $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("env-setup-tests-{0}" -
 New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
 
 try {
-    $paths = Initialize-EnvSetupStorage -RootPath $tempRoot
+    $readOnlyRoot = Join-Path $tempRoot 'read-only'
+    $readOnlyPaths = Initialize-EnvSetupStorage -RootPath $readOnlyRoot -ReadOnly
+    if (Test-Path -LiteralPath $readOnlyRoot) {
+        throw 'Read-only storage initialization created a directory.'
+    }
+
+    Enter-EnvSetupLock -Paths $readOnlyPaths -ReadOnly
+    if (Test-Path -LiteralPath $readOnlyPaths.LockPath) {
+        throw 'A read-only lock created lock.json.'
+    }
+    Exit-EnvSetupLock -Paths $readOnlyPaths
+
+    $paths = Initialize-EnvSetupStorage -RootPath (Join-Path $tempRoot 'stateful')
 
     Write-JsonFileAtomic -Value ([pscustomobject]@{ processId = 2147483647 }) -Path $paths.LockPath
     Enter-EnvSetupLock -Paths $paths
@@ -33,6 +45,19 @@ try {
     Exit-EnvSetupLock -Paths $paths
     if (Test-Path -LiteralPath $paths.LockPath) {
         throw 'The setup lock was not removed.'
+    }
+
+    Assert-SetupPlanSchema -Plan ([pscustomobject]@{ selectedTasks = @('test.success') })
+
+    $schemaFailed = $false
+    try {
+        Assert-SetupPlanSchema -Plan ([pscustomobject]@{ schemaVersion = 2; selectedTasks = @('test.success') })
+    }
+    catch {
+        $schemaFailed = $true
+    }
+    if (-not $schemaFailed) {
+        throw 'An unsupported plan schema version was accepted.'
     }
 
     $state = New-EnvSetupState
@@ -66,6 +91,18 @@ try {
         throw 'Completed task state was not persisted.'
     }
 
+    $stateBeforeInspection = Get-Content -LiteralPath $paths.StatePath -Raw
+    $context.Check = $true
+    Invoke-SetupTask -Task $task -Context $context
+    $context.Check = $false
+    $context.DryRun = $true
+    Invoke-SetupTask -Task $task -Context $context
+    $context.DryRun = $false
+    $stateAfterInspection = Get-Content -LiteralPath $paths.StatePath -Raw
+    if ($stateBeforeInspection -ne $stateAfterInspection) {
+        throw 'Check or dry-run mode modified state.json.'
+    }
+
     $failureTask = [pscustomobject]@{
         Id            = 'test.failure'
         Name          = 'Failing test task'
@@ -94,6 +131,17 @@ try {
     $order = Resolve-TaskOrder -Tasks @($dependentTask, $dependencyTask) -SelectedTaskIds @('test.dependent')
     if (($order -join ',') -ne 'test.dependency,test.dependent') {
         throw 'Task dependencies were not ordered correctly.'
+    }
+
+    $excludeFailed = $false
+    try {
+        Assert-NoExcludedTaskDependencies -OrderedTaskIds $order -ExcludedTaskIds @('test.dependency')
+    }
+    catch {
+        $excludeFailed = $true
+    }
+    if (-not $excludeFailed) {
+        throw 'An excluded transitive dependency was accepted.'
     }
 
     Write-Host 'Core tests passed.'
