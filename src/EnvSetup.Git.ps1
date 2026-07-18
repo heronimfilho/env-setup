@@ -178,7 +178,7 @@ function Get-GitTasks {
     return @(
         [pscustomobject]@{
             Id = 'git.windows-config'; Name = 'Configure Git for Windows'; Category = 'Git and GitHub'; Default = $true
-            Profiles = @('Core', 'Backend', 'Full'); RequiresAdmin = $false; Dependencies = @('windows.git')
+            Profiles = @('Core', 'Backend', 'Full'); RequiresAdmin = $false; Dependencies = @('windows.git', 'windows.vscode')
             Detect = { param($Context) Test-WindowsGitConfiguration -Context $Context }
             Apply = { param($Context) Set-WindowsGitConfiguration -Context $Context }
             Verify = { param($Context) Test-WindowsGitConfiguration -Context $Context }
