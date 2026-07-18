@@ -37,7 +37,7 @@ Optional:
 .\setup.ps1 -Profile Core
 .\setup.ps1 -Profile Backend
 .\setup.ps1 -Profile Full
-.\setup.ps1 -Config .\profile.json
+.\setup.ps1 -Config .\profiles\custom.example.json
 .\setup.ps1 -Include windows.git,wsl.node
 .\setup.ps1 -Exclude windows.docker
 .\setup.ps1 -WslDistribution Ubuntu-24.04
