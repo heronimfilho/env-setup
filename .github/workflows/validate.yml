@@ -49,6 +49,10 @@ jobs:
         shell: powershell
         run: .\tests\vscode.test.ps1
 
+      - name: Run WSL task tests
+        shell: powershell
+        run: .\tests\wsl.test.ps1
+
   shell:
     runs-on: ubuntu-latest
 
@@ -56,10 +60,13 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Validate Bash syntax
-        run: bash -n configure-zsh.sh tests/configure-zsh.test.sh
+        run: bash -n configure-zsh.sh install-node.sh tests/configure-zsh.test.sh tests/node.test.sh
 
       - name: Run Zsh setup tests
         run: bash tests/configure-zsh.test.sh
+
+      - name: Run NVM and Node setup tests
+        run: bash tests/node.test.sh
 
       - name: Validate JSON
         run: |
