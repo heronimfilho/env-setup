@@ -48,10 +48,14 @@ Optional:
 .\setup.ps1 -Resume
 ```
 
+Supported WSL distributions: `Ubuntu`, `Ubuntu-24.04`, `Ubuntu-22.04`, `Debian`, `kali-linux`.
+
 Non-interactive Git configuration:
 
 ```powershell
-.\setup.ps1 -Profile Backend -NonInteractive `
+.\setup.ps1 `
+  -Include windows.git,git.windows-config,git.windows-gcm `
+  -NonInteractive `
   -GitName "Your Name" `
   -GitEmail "you@example.com"
 ```
