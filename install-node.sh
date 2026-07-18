@@ -5,6 +5,8 @@ set -Eeuo pipefail
 readonly ENV_SETUP_NVM_VERSION="${ENV_SETUP_NVM_VERSION:-v0.40.4}"
 readonly NVM_BLOCK_START="# >>> env-setup nvm >>>"
 readonly NVM_BLOCK_END="# <<< env-setup nvm <<<"
+readonly SHELL_BACKUP_DIR="${HOME}/.env-setup/backups"
+readonly -a PROFILE_FILES=("${HOME}/.bashrc" "${HOME}/.zshrc")
 
 unset NVM_BIN NVM_INC NODE_PATH
 export NVM_DIR="${HOME}/.nvm"
@@ -18,6 +20,72 @@ if ! command -v sudo >/dev/null 2>&1; then
   echo "sudo is required." >&2
   exit 1
 fi
+
+validate_managed_block() {
+  local profile_file="$1"
+  local start_count=0
+  local end_count=0
+
+  [[ -f "${profile_file}" ]] || return 0
+
+  start_count="$(grep -Fxc "${NVM_BLOCK_START}" "${profile_file}" || true)"
+  end_count="$(grep -Fxc "${NVM_BLOCK_END}" "${profile_file}" || true)"
+
+  if [[ "${start_count}" -ne "${end_count}" || "${start_count}" -gt 1 ]]; then
+    echo "The managed NVM block is incomplete or duplicated in ${profile_file}. Fix the markers before running setup again." >&2
+    return 1
+  fi
+}
+
+backup_profile_file() {
+  local profile_file="$1"
+
+  [[ -f "${profile_file}" ]] || return 0
+  mkdir -p "${SHELL_BACKUP_DIR}"
+  cp "${profile_file}" "${SHELL_BACKUP_DIR}/$(basename "${profile_file}")-$(date +%Y%m%d-%H%M%S)-$$.bak"
+}
+
+ensure_nvm_block() {
+  local profile_file="$1"
+  local temporary_file
+
+  mkdir -p "$(dirname "${profile_file}")"
+  touch "${profile_file}"
+  backup_profile_file "${profile_file}"
+  temporary_file="$(mktemp "${profile_file}.env-setup.XXXXXX")"
+
+  if ! awk -v start="${NVM_BLOCK_START}" -v end="${NVM_BLOCK_END}" '
+    $0 == start { skip = 1; next }
+    $0 == end { skip = 0; next }
+    !skip { print }
+  ' "${profile_file}" > "${temporary_file}"; then
+    rm -f "${temporary_file}"
+    return 1
+  fi
+
+  while [[ -s "${temporary_file}" ]] && [[ "$(tail -n 1 "${temporary_file}")" == "" ]]; do
+    sed -i '$d' "${temporary_file}"
+  done
+
+  if [[ -s "${temporary_file}" ]]; then
+    printf '\n' >> "${temporary_file}"
+  fi
+
+  cat >> "${temporary_file}" <<'BLOCK'
+# >>> env-setup nvm >>>
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+[ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"
+# <<< env-setup nvm <<<
+BLOCK
+
+  chmod --reference="${profile_file}" "${temporary_file}"
+  mv -f "${temporary_file}" "${profile_file}"
+}
+
+for profile_file in "${PROFILE_FILES[@]}"; do
+  validate_managed_block "${profile_file}"
+done
 
 sudo_command=(sudo)
 if [[ "${ENV_SETUP_NONINTERACTIVE:-0}" == "1" ]]; then
@@ -49,42 +117,9 @@ if [[ ! -s "${NVM_DIR}/nvm.sh" ]]; then
   exit 1
 fi
 
-ensure_nvm_block() {
-  local profile_file="$1"
-  local temporary_file
-
-  mkdir -p "$(dirname "${profile_file}")"
-  touch "${profile_file}"
-  temporary_file="$(mktemp)"
-
-  awk -v start="${NVM_BLOCK_START}" -v end="${NVM_BLOCK_END}" '
-    $0 == start { skip = 1; next }
-    $0 == end { skip = 0; next }
-    !skip { print }
-  ' "${profile_file}" > "${temporary_file}"
-
-  while [[ -s "${temporary_file}" ]] && [[ "$(tail -n 1 "${temporary_file}")" == "" ]]; do
-    sed -i '$d' "${temporary_file}"
-  done
-
-  cat "${temporary_file}" > "${profile_file}"
-  if [[ -s "${profile_file}" ]]; then
-    printf '\n' >> "${profile_file}"
-  fi
-
-  cat >> "${profile_file}" <<'EOF'
-# >>> env-setup nvm >>>
-export NVM_DIR="$HOME/.nvm"
-[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
-[ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"
-# <<< env-setup nvm <<<
-EOF
-
-  rm -f "${temporary_file}"
-}
-
-ensure_nvm_block "${HOME}/.bashrc"
-ensure_nvm_block "${HOME}/.zshrc"
+for profile_file in "${PROFILE_FILES[@]}"; do
+  ensure_nvm_block "${profile_file}"
+done
 
 # shellcheck source=/dev/null
 source "${NVM_DIR}/nvm.sh"
