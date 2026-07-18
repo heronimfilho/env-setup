@@ -50,24 +50,7 @@ jobs:
 
       - name: Run Visual Studio Code tests
         shell: powershell
-        run: |
-          try {
-            .\tests\vscode.test.ps1 *>&1 | Tee-Object -FilePath vscode-test.log
-          }
-          catch {
-            $_ | Format-List * -Force | Out-String | Add-Content -LiteralPath vscode-test.log
-            $_.ScriptStackTrace | Add-Content -LiteralPath vscode-test.log
-            throw
-          }
-
-      - name: Upload Visual Studio Code test diagnostics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: vscode-test-diagnostics
-          path: vscode-test.log
-          if-no-files-found: ignore
-          retention-days: 3
+        run: .\tests\vscode.test.ps1
 
       - name: Run WSL task tests
         shell: powershell
