@@ -48,6 +48,8 @@ Optional:
 .\setup.ps1 -Resume
 ```
 
+Interactive runs reuse the tasks and setup options saved by the previous interactive run. Edit the selections in the menu to replace the saved preferences; explicit command-line options take precedence.
+
 Supported WSL distributions: `Ubuntu`, `Ubuntu-24.04`, `Ubuntu-22.04`, `Debian`, `kali-linux`.
 
 Non-interactive Git configuration:
@@ -89,8 +91,8 @@ Without Git:
 
 ```powershell
 Set-ExecutionPolicy -Scope Process Bypass
-$commit = "977545c4ef4df754675dd95b7eab954dcc3295e6"
-$archiveSha256 = "99e9a89eb571c9bddf20f8ec720a944b333b46e154575f6f0f77477bed4d035d"
+$commit = "8c9665ef174a14c063dba90b1a05b2ba7f2c2827"
+$archiveSha256 = "f979cb0124f57cbb389557a7a976eafe9866c3b8d6933b4bcc0669f5c078775f"
 $bootstrap = Join-Path $env:TEMP "env-setup-bootstrap-$commit.ps1"
 Invoke-WebRequest `
   -Uri "https://raw.githubusercontent.com/heronimfilho/env-setup/$commit/bootstrap.ps1" `
