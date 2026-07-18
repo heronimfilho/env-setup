@@ -2,6 +2,7 @@ Set-StrictMode -Version Latest
 
 $script:EnvSetupMutex = $null
 $script:EnvSetupMutexName = $null
+$script:EnvSetupLockReadOnly = $false
 
 function Get-EnvSetupMutexName {
     param([Parameter(Mandatory = $true)][string]$LockPath)
@@ -21,7 +22,10 @@ function Get-EnvSetupMutexName {
 }
 
 function Enter-EnvSetupLock {
-    param([Parameter(Mandatory = $true)]$Paths)
+    param(
+        [Parameter(Mandatory = $true)]$Paths,
+        [switch]$ReadOnly
+    )
 
     if ($null -ne $script:EnvSetupMutex) {
         throw 'This process already holds the env-setup lock.'
@@ -45,17 +49,20 @@ function Enter-EnvSetupLock {
 
         $script:EnvSetupMutex = $mutex
         $script:EnvSetupMutexName = $mutexName
+        $script:EnvSetupLockReadOnly = [bool]$ReadOnly
 
-        Remove-Item -LiteralPath $Paths.LockPath -Force -ErrorAction SilentlyContinue
-        $currentProcess = Get-Process -Id $PID
-        $lock = [pscustomobject]@{
-            processId        = $PID
-            processStartedAt = $currentProcess.StartTime.ToUniversalTime().ToString('o')
-            createdAt        = (Get-Date).ToUniversalTime().ToString('o')
-            computer         = $env:COMPUTERNAME
-            mutexName        = $mutexName
+        if (-not $ReadOnly) {
+            Remove-Item -LiteralPath $Paths.LockPath -Force -ErrorAction SilentlyContinue
+            $currentProcess = Get-Process -Id $PID
+            $lock = [pscustomobject]@{
+                processId        = $PID
+                processStartedAt = $currentProcess.StartTime.ToUniversalTime().ToString('o')
+                createdAt        = (Get-Date).ToUniversalTime().ToString('o')
+                computer         = $env:COMPUTERNAME
+                mutexName        = $mutexName
+            }
+            Write-JsonFileAtomic -Value $lock -Path $Paths.LockPath
         }
-        Write-JsonFileAtomic -Value $lock -Path $Paths.LockPath
     }
     catch {
         if ($acquired) {
@@ -64,6 +71,7 @@ function Enter-EnvSetupLock {
         $mutex.Dispose()
         $script:EnvSetupMutex = $null
         $script:EnvSetupMutexName = $null
+        $script:EnvSetupLockReadOnly = $false
         throw
     }
 }
@@ -72,7 +80,7 @@ function Exit-EnvSetupLock {
     param([Parameter(Mandatory = $true)]$Paths)
 
     try {
-        if (Test-Path -LiteralPath $Paths.LockPath -PathType Leaf) {
+        if (-not $script:EnvSetupLockReadOnly -and (Test-Path -LiteralPath $Paths.LockPath -PathType Leaf)) {
             $lock = $null
             try {
                 $lock = Read-JsonFile -Path $Paths.LockPath
@@ -90,6 +98,7 @@ function Exit-EnvSetupLock {
             $script:EnvSetupMutex.Dispose()
             $script:EnvSetupMutex = $null
             $script:EnvSetupMutexName = $null
+            $script:EnvSetupLockReadOnly = $false
         }
     }
 }
