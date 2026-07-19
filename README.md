@@ -93,8 +93,8 @@ Without Git:
 
 ```powershell
 Set-ExecutionPolicy -Scope Process Bypass
-$commit = "799fb06ac409c31c8d81b8f566fcc2ff6fc63664"
-$archiveSha256 = "e1aed4fe4e47204c002687ed557ee0b4d2731208457fd6ee80e815d4c8d24eae"
+$commit = "4d821a0080b467e01f4570f5f65a3c2a45fc54c2"
+$archiveSha256 = "1a45b9402918d934f511d9ee840b0d5e58426649b5db0f668c7003ce666ffa65"
 $bootstrap = Join-Path $env:TEMP "env-setup-bootstrap-$commit.ps1"
 Invoke-WebRequest `
   -Uri "https://raw.githubusercontent.com/heronimfilho/env-setup/$commit/bootstrap.ps1" `
