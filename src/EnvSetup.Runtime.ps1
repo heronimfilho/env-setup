@@ -14,7 +14,6 @@ function Initialize-SetupOutput {
         [int]$HeartbeatSeconds = 10,
         [int]$CommandTimeoutSeconds = 0
     )
-
     $script:EnvSetupNoColor = [bool]$NoColor
     $script:EnvSetupOutputFormat = $OutputFormat
     $script:EnvSetupLogPath = $LogPath
@@ -29,21 +28,18 @@ function Write-SetupMessage {
         [string]$Event = 'message',
         $Data
     )
-
     $timestamp = (Get-Date).ToUniversalTime().ToString('o')
     if (-not [string]::IsNullOrWhiteSpace($script:EnvSetupLogPath)) {
         $directory = Split-Path -Parent $script:EnvSetupLogPath
         if (-not (Test-Path -LiteralPath $directory)) { New-Item -ItemType Directory -Path $directory -Force | Out-Null }
         Add-Content -LiteralPath $script:EnvSetupLogPath -Value ("{0} [{1}] {2}" -f $timestamp, $Level.ToUpperInvariant(), $Message) -Encoding UTF8
     }
-
     if ($script:EnvSetupOutputFormat -eq 'Json') {
         $payload = [ordered]@{ timestamp = $timestamp; event = $Event; level = $Level.ToLowerInvariant(); message = $Message }
         if ($null -ne $Data) { $payload.data = $Data }
         Write-Output ($payload | ConvertTo-Json -Depth 12 -Compress)
         return
     }
-
     if ($script:EnvSetupNoColor) { Write-Host $Message; return }
     $color = switch ($Level) {
         'Success' { 'Green' }
@@ -73,7 +69,6 @@ function ConvertTo-NativeCommandLineArgument {
     param([AllowEmptyString()][string]$Value)
     if ($null -eq $Value) { return '""' }
     if ($Value -notmatch '[\s"]') { return $Value }
-
     $builder = New-Object System.Text.StringBuilder
     [void]$builder.Append('"')
     $backslashes = 0
@@ -131,6 +126,7 @@ function Invoke-NativeCommand {
         while (-not $process.WaitForExit(250)) {
             if ($TimeoutSeconds -gt 0 -and $stopwatch.Elapsed.TotalSeconds -ge $TimeoutSeconds) {
                 Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+                [void]$process.WaitForExit(5000)
                 throw "Command timed out after $TimeoutSeconds seconds: $FilePath"
             }
             if (($stopwatch.Elapsed - $lastHeartbeat).TotalSeconds -ge $HeartbeatSeconds) {
@@ -151,6 +147,8 @@ function Invoke-NativeCommand {
             }
         }
         $process.WaitForExit()
+        $process.Refresh()
+        $exitCode = [int]$process.ExitCode
         $stopwatch.Stop()
 
         $stdout = @(Get-Content -LiteralPath $stdoutPath -ErrorAction SilentlyContinue)
@@ -161,16 +159,25 @@ function Invoke-NativeCommand {
         }
 
         $output = @($stdout + $stderr)
-        if ($process.ExitCode -ne 0 -and -not $AllowFailure) {
+        if ($exitCode -ne 0 -and -not $AllowFailure) {
             $message = if ($output.Count -gt 0) { $output -join [Environment]::NewLine } else { 'No output was returned.' }
-            throw "$FilePath exited with code $($process.ExitCode).$([Environment]::NewLine)$message"
+            throw "$FilePath exited with code $exitCode.$([Environment]::NewLine)$message"
         }
         return [pscustomobject]@{
-            ExitCode = $process.ExitCode; Output = $output; Text = ($output -join [Environment]::NewLine)
-            Duration = $stopwatch.Elapsed; ProcessId = $process.Id
+            ExitCode = $exitCode
+            Output = $output
+            Text = ($output -join [Environment]::NewLine)
+            Duration = $stopwatch.Elapsed
+            ProcessId = $process.Id
         }
     }
-    finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    finally {
+        if ($null -ne $process -and -not $process.HasExited) {
+            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+            [void]$process.WaitForExit(5000)
+        }
+        Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
 }
 
 function Invoke-CodeCommand {
