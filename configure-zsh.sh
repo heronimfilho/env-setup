@@ -88,7 +88,6 @@ configure_plugins() {
   local plugin
   local plugins_line
   local temporary_file
-  local -a existing_plugin_list=()
   local -a merged_plugins=()
   local -a required_plugins=(
     git
@@ -101,14 +100,13 @@ configure_plugins() {
   declare -A seen_plugins=()
 
   existing_plugins="$(get_existing_plugins)"
-  read -r -a existing_plugin_list <<< "${existing_plugins}"
-  for plugin in "${existing_plugin_list[@]}"; do
+  while IFS= read -r plugin; do
     plugin="${plugin//\"/}"
     plugin="${plugin//\'/}"
     [[ -z "${plugin}" || -n "${seen_plugins[${plugin}]:-}" ]] && continue
     merged_plugins+=("${plugin}")
     seen_plugins["${plugin}"]=1
-  done
+  done < <(printf '%s\n' "${existing_plugins}" | tr '[:space:]' '\n')
 
   for plugin in "${required_plugins[@]}"; do
     [[ -n "${seen_plugins[${plugin}]:-}" ]] && continue
