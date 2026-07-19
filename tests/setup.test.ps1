@@ -33,10 +33,7 @@ public static class WingetStub {
         else {
             & $setupPath -Include windows.powershell,windows.show-extensions -DryRun -NonInteractive
         }
-
-        if (Test-Path -LiteralPath (Join-Path $dataPath 'env-setup')) {
-            throw "$mode mode created env-setup storage."
-        }
+        if (Test-Path -LiteralPath (Join-Path $dataPath 'env-setup')) { throw "$mode mode created env-setup storage." }
     }
 
     $configPath = Join-Path $tempRoot 'minimal.json'
@@ -44,9 +41,20 @@ public static class WingetStub {
     $configDataPath = Join-Path $tempRoot 'config'
     $env:LOCALAPPDATA = $configDataPath
     & $setupPath -Config $configPath -Check -NonInteractive
-    if (Test-Path -LiteralPath (Join-Path $configDataPath 'env-setup')) {
-        throw 'A minimal configuration check created env-setup storage.'
-    }
+    if (Test-Path -LiteralPath (Join-Path $configDataPath 'env-setup')) { throw 'A minimal configuration check created env-setup storage.' }
+
+    $jsonDataPath = Join-Path $tempRoot 'json'
+    $env:LOCALAPPDATA = $jsonDataPath
+    $jsonLines = @(& $setupPath -Include windows.powershell,windows.show-extensions -Check -NonInteractive -OutputFormat Json -NoColor 6>&1 | ForEach-Object { [string]$_ } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    if ($jsonLines.Count -lt 4) { throw "The JSON setup run emitted too few events: $($jsonLines.Count)" }
+    $jsonEvents = @(
+        foreach ($line in $jsonLines) {
+            try { $line | ConvertFrom-Json }
+            catch { throw "The setup emitted a non-JSON line: $line" }
+        }
+    )
+    if (@($jsonEvents | Where-Object event -eq 'setup-summary').Count -ne 1) { throw 'The JSON setup run did not emit exactly one setup summary.' }
+    if (Test-Path -LiteralPath (Join-Path $jsonDataPath 'env-setup')) { throw 'A JSON check created env-setup storage.' }
 
     $excludeFailed = $false
     $env:LOCALAPPDATA = Join-Path $tempRoot 'exclude'
@@ -55,16 +63,10 @@ public static class WingetStub {
             -GitName 'Test Developer' -GitEmail 'developer@example.com'
     }
     catch {
-        if ($_.Exception.Message -match 'Cannot exclude required task dependencies') {
-            $excludeFailed = $true
-        }
-        else {
-            throw
-        }
+        if ($_.Exception.Message -match 'Cannot exclude required task dependencies') { $excludeFailed = $true }
+        else { throw }
     }
-    if (-not $excludeFailed) {
-        throw 'setup.ps1 accepted an excluded transitive dependency.'
-    }
+    if (-not $excludeFailed) { throw 'setup.ps1 accepted an excluded transitive dependency.' }
 
     Write-Host 'Setup integration tests passed.'
 }
