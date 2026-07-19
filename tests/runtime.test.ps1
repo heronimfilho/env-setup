@@ -25,9 +25,15 @@ try {
     if (-not $timedOut) { throw 'Native command timeout was not enforced.' }
 
     Initialize-SetupOutput -NoColor -OutputFormat Json
-    $jsonLine = @(Write-SetupMessage -Message 'json-test' -Level Info -Event 'test-event')[0]
+    $jsonLine = @(& { Write-SetupMessage -Message 'json-test' -Level Info -Event 'test-event' } 6>&1 | ForEach-Object { [string]$_ })[0]
     $json = $jsonLine | ConvertFrom-Json
     if ($json.event -ne 'test-event' -or $json.message -ne 'json-test') { throw 'JSON output is invalid.' }
+
+    $pipelineResult = @(& {
+        Write-SetupMessage -Message 'pipeline-test' -Level Info -Event 'pipeline-event'
+        [pscustomobject]@{ ok = $true }
+    })
+    if ($pipelineResult.Count -ne 1 -or -not $pipelineResult[0].ok) { throw 'JSON output polluted a task result pipeline.' }
 
     Write-Host 'Runtime tests passed.'
 }
