@@ -31,7 +31,7 @@ function Compare-SemanticVersion {
 function Update-EnvSetupGitClone {
     param(
         [Parameter(Mandatory = $true)][string]$ProjectRoot,
-        [Parameter(Mandatory = $true)][string]$Commit
+        [Parameter(Mandatory = $true)][string]$ExpectedVersion
     )
 
     if (-not (Test-CommandAvailable -Name 'git.exe') -and -not (Test-CommandAvailable -Name 'git')) {
@@ -48,9 +48,11 @@ function Update-EnvSetupGitClone {
     }
 
     Invoke-NativeCommand -FilePath $gitCommand -ArgumentList @('-C', $ProjectRoot, 'fetch', '--prune', 'origin', 'main') | Out-Null
-    Invoke-NativeCommand -FilePath $gitCommand -ArgumentList @('-C', $ProjectRoot, 'merge', '--ff-only', $Commit) | Out-Null
-    $head = (Invoke-NativeCommand -FilePath $gitCommand -ArgumentList @('-C', $ProjectRoot, 'rev-parse', 'HEAD') -Quiet).Text.Trim()
-    if ($head -ne $Commit) { throw "Git update verification failed. Expected $Commit but HEAD is $head." }
+    Invoke-NativeCommand -FilePath $gitCommand -ArgumentList @('-C', $ProjectRoot, 'merge', '--ff-only', 'origin/main') | Out-Null
+    $installedVersion = Get-EnvSetupVersion -ProjectRoot $ProjectRoot
+    if ($installedVersion -ne $ExpectedVersion) {
+        throw "Git update verification failed. Expected version $ExpectedVersion but installed version is $installedVersion."
+    }
 }
 
 function Invoke-EnvSetupUpdate {
@@ -70,7 +72,7 @@ function Invoke-EnvSetupUpdate {
 
     if (Test-Path -LiteralPath (Join-Path $ProjectRoot '.git') -PathType Container) {
         Write-SetupMessage -Message 'Updating the clean main branch with a verified fast-forward...' -Level Muted -Event 'update-git'
-        Update-EnvSetupGitClone -ProjectRoot $ProjectRoot -Commit $manifest.commit
+        Update-EnvSetupGitClone -ProjectRoot $ProjectRoot -ExpectedVersion $manifest.version
     }
     else {
         $bootstrapPath = Join-Path ([System.IO.Path]::GetTempPath()) ("env-setup-bootstrap-{0}.ps1" -f $manifest.commit)
