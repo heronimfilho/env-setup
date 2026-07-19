@@ -50,6 +50,8 @@ Optional:
 
 Interactive runs reuse the tasks and setup options saved by the previous interactive run. Edit the selections in the menu to replace the saved preferences; explicit command-line options take precedence.
 
+During execution, each task shows its position in the plan, the active state-check, apply, or verification phase, and elapsed phase timing. WinGet tasks also show the exact package being queried or installed.
+
 Supported WSL distributions: `Ubuntu`, `Ubuntu-24.04`, `Ubuntu-22.04`, `Debian`, `kali-linux`.
 
 Non-interactive Git configuration:
@@ -91,8 +93,8 @@ Without Git:
 
 ```powershell
 Set-ExecutionPolicy -Scope Process Bypass
-$commit = "8c9665ef174a14c063dba90b1a05b2ba7f2c2827"
-$archiveSha256 = "f979cb0124f57cbb389557a7a976eafe9866c3b8d6933b4bcc0669f5c078775f"
+$commit = "799fb06ac409c31c8d81b8f566fcc2ff6fc63664"
+$archiveSha256 = "e1aed4fe4e47204c002687ed557ee0b4d2731208457fd6ee80e815d4c8d24eae"
 $bootstrap = Join-Path $env:TEMP "env-setup-bootstrap-$commit.ps1"
 Invoke-WebRequest `
   -Uri "https://raw.githubusercontent.com/heronimfilho/env-setup/$commit/bootstrap.ps1" `
