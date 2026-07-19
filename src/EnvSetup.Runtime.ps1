@@ -105,9 +105,9 @@ function Invoke-NativeCommand {
 
     $argumentString = (@($ArgumentList | ForEach-Object { ConvertTo-NativeCommandLineArgument -Value ([string]$_) }) -join ' ')
     if ([System.IO.Path]::GetExtension($resolvedPath) -in @('.cmd', '.bat')) {
-        $scriptCommand = ('"{0}" {1}' -f $resolvedPath, $argumentString).Trim()
+        $scriptArguments = if ([string]::IsNullOrWhiteSpace($argumentString)) { '' } else { " $argumentString" }
+        $argumentString = '/d /s /c ""{0}"{1}"' -f $resolvedPath, $scriptArguments
         $resolvedPath = if ([string]::IsNullOrWhiteSpace($env:ComSpec)) { 'cmd.exe' } else { $env:ComSpec }
-        $argumentString = "/d /s /c " + (ConvertTo-NativeCommandLineArgument -Value $scriptCommand)
     }
 
     $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("env-setup-process-{0}" -f [guid]::NewGuid().ToString('N'))
