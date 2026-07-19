@@ -14,9 +14,21 @@ $manifest = [pscustomobject]@{
     archiveSha256 = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
 }
 Assert-EnvSetupReleaseManifest -Manifest $manifest
-if ((Compare-SemanticVersion -Left '1.2.3' -Right '1.2.2') -le 0) { throw 'Semantic version comparison failed for a newer version.' }
-if ((Compare-SemanticVersion -Left '1.2.3' -Right '1.2.3') -ne 0) { throw 'Semantic version comparison failed for equal versions.' }
-if ((Compare-SemanticVersion -Left '1.2.2' -Right '1.2.3') -ge 0) { throw 'Semantic version comparison failed for an older version.' }
+foreach ($comparison in @(
+    @{ Left = '1.2.3'; Right = '1.2.2'; Expected = 1 },
+    @{ Left = '1.2.3'; Right = '1.2.3'; Expected = 0 },
+    @{ Left = '1.2.2'; Right = '1.2.3'; Expected = -1 },
+    @{ Left = '1.2.3-beta'; Right = '1.2.3'; Expected = -1 },
+    @{ Left = '1.2.3'; Right = '1.2.3-beta'; Expected = 1 },
+    @{ Left = '1.2.3-beta.2'; Right = '1.2.3-beta.10'; Expected = -1 },
+    @{ Left = '1.2.3-alpha'; Right = '1.2.3-beta'; Expected = -1 },
+    @{ Left = '1.2.3+build.1'; Right = '1.2.3+build.2'; Expected = 0 }
+)) {
+    $actual = Compare-SemanticVersion -Left $comparison.Left -Right $comparison.Right
+    if ([Math]::Sign($actual) -ne $comparison.Expected) {
+        throw "Semantic version comparison failed: $($comparison.Left) vs $($comparison.Right), received $actual."
+    }
+}
 
 $invalid = $false
 try { Assert-EnvSetupReleaseManifest -Manifest ([pscustomobject]@{ version = 'bad'; commit = 'x'; archiveSha256 = 'y' }) }
@@ -64,7 +76,7 @@ try {
 finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
 
 $bootstrap = Get-Content -LiteralPath (Join-Path $projectRoot 'bootstrap.ps1') -Raw
-foreach ($required in @("Join-Path `$Destination '.git'", 'custom-profiles', "Name -ne 'custom.example.json'")) {
+foreach ($required in @("Join-Path `$Destination '.git'", 'custom-profiles', "Name -ne 'custom.example.json'", '[switch]$Quiet', 'Write-BootstrapMessage')) {
     if (-not $bootstrap.Contains($required)) { throw "bootstrap.ps1 is missing update protection: $required" }
 }
 
