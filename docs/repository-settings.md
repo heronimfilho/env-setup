@@ -5,7 +5,7 @@ The following GitHub settings should be enabled manually for `main` because they
 ## Pull request protection
 
 - require a pull request before merging;
-- require the `powershell` and `shell-and-docs` jobs from the `Validate` workflow;
+- require `powershell-lint`, both `powershell-tests` matrix jobs, and `shell-and-docs` from the `Validate` workflow;
 - require branches to be up to date before merging;
 - require all review conversations to be resolved;
 - block direct pushes and force pushes;
