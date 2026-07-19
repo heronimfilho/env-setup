@@ -12,11 +12,17 @@ param(
 
     [string]$Destination = (Join-Path $HOME 'env-setup'),
     [switch]$UpdateExisting,
-    [switch]$SkipRun
+    [switch]$SkipRun,
+    [switch]$Quiet
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+
+function Write-BootstrapMessage {
+    param([Parameter(Mandatory = $true)][string]$Message, [ConsoleColor]$Color = [ConsoleColor]::Cyan)
+    if (-not $Quiet) { Write-Host $Message -ForegroundColor $Color }
+}
 
 if ((Test-Path -LiteralPath $Destination) -and -not $UpdateExisting) {
     throw "The destination already exists. Remove it, choose another destination, or use -UpdateExisting: $Destination"
@@ -35,7 +41,7 @@ $archiveUrl = "https://codeload.github.com/heronimfilho/env-setup/zip/$Commit"
 
 try {
     New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
-    Write-Host "Downloading env-setup commit $Commit..." -ForegroundColor Cyan
+    Write-BootstrapMessage -Message "Downloading env-setup commit $Commit..."
     Invoke-WebRequest -Uri $archiveUrl -OutFile $archivePath -UseBasicParsing
 
     $actualHash = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -43,7 +49,7 @@ try {
     if ($actualHash -ne $expectedHash) {
         throw "Archive checksum validation failed. Expected $expectedHash but received $actualHash."
     }
-    Write-Host 'Archive checksum validated.' -ForegroundColor Green
+    Write-BootstrapMessage -Message 'Archive checksum validated.' -Color Green
 
     Expand-Archive -LiteralPath $archivePath -DestinationPath $extractPath -Force
     $source = Get-ChildItem -LiteralPath $extractPath -Directory | Select-Object -First 1
@@ -54,10 +60,10 @@ try {
     New-Item -ItemType Directory -Path (Split-Path -Parent $Destination) -Force | Out-Null
     if (-not (Test-Path -LiteralPath $Destination)) {
         Move-Item -LiteralPath $source.FullName -Destination $Destination
-        Write-Host "env-setup was extracted to: $Destination" -ForegroundColor Green
+        Write-BootstrapMessage -Message "env-setup was extracted to: $Destination" -Color Green
     }
     else {
-        Write-Host "Updating the existing env-setup installation at: $Destination" -ForegroundColor Cyan
+        Write-BootstrapMessage -Message "Updating the existing env-setup installation at: $Destination"
         New-Item -ItemType Directory -Path $backupPath -Force | Out-Null
         Get-ChildItem -LiteralPath $Destination -Force | ForEach-Object {
             Copy-Item -LiteralPath $_.FullName -Destination $backupPath -Recurse -Force
@@ -94,7 +100,7 @@ try {
             }
             throw
         }
-        Write-Host 'Existing installation updated successfully.' -ForegroundColor Green
+        Write-BootstrapMessage -Message 'Existing installation updated successfully.' -Color Green
     }
 }
 finally {
