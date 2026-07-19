@@ -3,5 +3,5 @@
   "commit": "0000000000000000000000000000000000000000",
   "archiveSha256": "0000000000000000000000000000000000000000000000000000000000000000",
   "minimumWindowsBuild": 19041,
-  "releaseNotes": "docs/changelog.md"
+  "releaseNotes": "CHANGELOG.md"
 }
