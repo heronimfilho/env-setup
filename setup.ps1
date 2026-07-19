@@ -95,7 +95,7 @@ $managementActionCount = @(
 ) | Where-Object { $_ } | Measure-Object | Select-Object -ExpandProperty Count
 if ($managementActionCount -gt 1) { throw 'Use only one management command at a time: -Doctor, -ListTasks, -Status, -ExportConfig, -ResetSelections, -ShowLastLog, -CollectDiagnostics, -Update, or -Version.' }
 
-$readOnly = [bool]($Check -or $DryRun -or $Doctor -or $ListTasks -or $Status -or $ExportConfig -or $ShowLastLog -or $CollectDiagnostics -or $Update -or $Version)
+$readOnly = [bool]($Check -or $DryRun -or $Doctor -or $ListTasks -or $Status -or $ExportConfig -or $ShowLastLog -or $CollectDiagnostics -or $Version)
 $paths = Initialize-EnvSetupStorage -ReadOnly:$readOnly
 $logPath = if ($readOnly) { $null } else { $paths.LogPath }
 Initialize-SetupOutput -NoColor:$NoColor -OutputFormat $OutputFormat -LogPath $logPath -HeartbeatSeconds $HeartbeatSeconds -CommandTimeoutSeconds $CommandTimeoutSeconds
@@ -162,7 +162,7 @@ try {
         return
     }
     if ($CollectDiagnostics) {
-        [void](New-EnvSetupDiagnosticsBundle -Paths $paths -Tasks $tasks -ProjectRoot $PSScriptRoot -Destination $DiagnosticsPath)
+        [void](New-EnvSetupDiagnosticsBundle -Paths $paths -Tasks $tasks -ProjectRoot $PSScriptRoot -Destination $DiagnosticsPath -SkipNetwork:$DoctorSkipNetwork)
         return
     }
     if ($Update) {
@@ -241,7 +241,8 @@ try {
     }
 
     if ($NonInteractive -and -not $Check -and -not $DryRun) {
-        $taskMap = @{}; foreach ($task in $tasks) { $taskMap[$task.Id] = $task }
+        $taskMap = @{}
+        foreach ($task in $tasks) { $taskMap[$task.Id] = $task }
         foreach ($interactiveTaskId in @('github.authenticate', 'ssh.windows-key', 'wsl.initialize')) {
             if ($orderedTaskIds -notcontains $interactiveTaskId) { continue }
             $configured = $false
