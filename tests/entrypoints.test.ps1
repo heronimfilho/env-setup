@@ -38,7 +38,7 @@ foreach ($forbidden in @('refs/heads', "Branch = 'main'", 'Branch = "main"')) {
 }
 
 $readme = Get-Content -LiteralPath (Join-Path $projectRoot 'README.md') -Raw
-foreach ($required in @('8c9665ef174a14c063dba90b1a05b2ba7f2c2827', 'f979cb0124f57cbb389557a7a976eafe9866c3b8d6933b4bcc0669f5c078775f')) {
+foreach ($required in @('799fb06ac409c31c8d81b8f566fcc2ff6fc63664', 'e1aed4fe4e47204c002687ed557ee0b4d2731208457fd6ee80e815d4c8d24eae')) {
     if (-not $readme.Contains($required)) {
         throw "README.md is missing the pinned bootstrap value: $required"
     }
