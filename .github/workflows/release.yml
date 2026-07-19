@@ -14,6 +14,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
 
       - name: Validate tag and release manifest
         id: manifest
@@ -34,7 +36,11 @@ jobs:
             echo "release-manifest.json version does not match VERSION" >&2
             exit 1
           fi
-          printf 'version=%s\ncommit=%s\nchecksum=%s\n' "$version" "$commit" "$checksum" >> "$GITHUB_OUTPUT"
+          printf 'version=%s\ncommit=%s\nchecksum=%s\n' \
+            "$version" \
+            "$commit" \
+            "$checksum" \
+            >> "$GITHUB_OUTPUT"
 
       - name: Build verified release assets
         shell: bash
@@ -43,7 +49,9 @@ jobs:
           commit="${{ steps.manifest.outputs.commit }}"
           expected="${{ steps.manifest.outputs.checksum }}"
           archive="env-setup-${{ steps.manifest.outputs.version }}.zip"
-          curl -fsSL "https://codeload.github.com/${GITHUB_REPOSITORY}/zip/${commit}" -o "$archive"
+          curl -fsSL \
+            "https://codeload.github.com/${GITHUB_REPOSITORY}/zip/${commit}" \
+            -o "$archive"
           actual="$(sha256sum "$archive" | awk '{print $1}')"
           if [[ "$actual" != "$expected" ]]; then
             echo "Release archive checksum mismatch" >&2
@@ -60,5 +68,5 @@ jobs:
             "env-setup-${{ steps.manifest.outputs.version }}.zip" \
             SHA256SUMS \
             --title "env-setup ${{ steps.manifest.outputs.version }}" \
-            --notes-file docs/changelog.md \
+            --notes-file CHANGELOG.md \
             --verify-tag
