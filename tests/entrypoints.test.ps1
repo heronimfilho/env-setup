@@ -5,6 +5,18 @@ $ErrorActionPreference = 'Stop'
 
 $projectRoot = Split-Path -Parent $PSScriptRoot
 
+$setup = Get-Content -LiteralPath (Join-Path $projectRoot 'setup.ps1') -Raw
+$windowsSettingsIndex = $setup.IndexOf('src/EnvSetup.WindowsSettings.ps1')
+$progressIndex = $setup.IndexOf('src/EnvSetup.Progress.ps1')
+if ($windowsSettingsIndex -lt 0 -or $progressIndex -lt 0 -or $progressIndex -le $windowsSettingsIndex) {
+    throw 'setup.ps1 must load the progress-aware task runner explicitly after all feature modules.'
+}
+
+$taskFactories = Get-Content -LiteralPath (Join-Path $projectRoot 'src/EnvSetup.TaskFactories.ps1') -Raw
+if ($taskFactories.Contains('EnvSetup.Progress.ps1')) {
+    throw 'Task factories must not load the progress runner implicitly.'
+}
+
 $installWsl = Get-Content -LiteralPath (Join-Path $projectRoot 'install-wsl.ps1') -Raw
 foreach ($required in @('setup.ps1', 'wsl.install')) {
     if (-not $installWsl.Contains($required)) {
