@@ -72,6 +72,28 @@ try {
         throw "Progress output does not include elapsed phase timing.`n$text"
     }
 
+    $failureTask = [pscustomobject]@{
+        Id            = 'test.verify-failure'
+        Name          = 'Verification failure component'
+        RequiresAdmin = $false
+        Dependencies  = @()
+        Detect        = { param($Context) $false }
+        Apply         = { param($Context) $null }
+        Verify        = { param($Context) $false }
+    }
+    try {
+        Invoke-SetupTask -Task $failureTask -Context $context | Out-Null
+        throw 'The verification failure task did not fail.'
+    }
+    catch {
+        if ($_.Exception.Message -eq 'The verification failure task did not fail.') { throw }
+    }
+
+    $failureState = Get-StateTask -State (Read-JsonFile -Path $paths.StatePath) -TaskId 'test.verify-failure'
+    if ($failureState.status -ne 'failed' -or $failureState.details.phase -ne 'verification') {
+        throw 'The failed task did not persist its active execution phase.'
+    }
+
     $wingetTask = New-WingetTask -Id 'test.winget' -Name 'Test Package' -Category 'Tests' -PackageId 'Example.Package'
     foreach ($propertyName in @('DetectMessage', 'ApplyMessage', 'VerifyMessage')) {
         $message = [string]$wingetTask.PSObject.Properties[$propertyName].Value
@@ -79,8 +101,8 @@ try {
             throw "WinGet task progress message does not identify the package: $propertyName"
         }
     }
-    if ($wingetTask.DetectMessage -notmatch 'first query') {
-        throw 'The WinGet detection message does not explain first-query source initialization.'
+    if ($wingetTask.DetectMessage -notmatch 'first WinGet query' -or $wingetTask.DetectMessage -notmatch 'wait for the state-check result') {
+        throw 'The WinGet detection message does not explain the first-query wait state.'
     }
 
     Write-Host 'Progress reporting tests passed.'
