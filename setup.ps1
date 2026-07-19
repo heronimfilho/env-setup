@@ -30,6 +30,8 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'src/EnvSetup.WSL.ps1')
 . (Join-Path $PSScriptRoot 'src/EnvSetup.Shell.ps1')
 . (Join-Path $PSScriptRoot 'src/EnvSetup.WindowsSettings.ps1')
+# Load the task runner last so no feature module can replace its progress-aware functions.
+. (Join-Path $PSScriptRoot 'src/EnvSetup.Progress.ps1')
 
 if ($Check -and $DryRun) {
     throw 'Use either -Check or -DryRun, not both.'
