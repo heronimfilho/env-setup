@@ -24,6 +24,15 @@ try {
     catch { $timedOut = $_.Exception.Message -match 'timed out' }
     if (-not $timedOut) { throw 'Native command timeout was not enforced.' }
 
+    $cmdDirectory = Join-Path $tempRoot 'command with spaces'
+    New-Item -ItemType Directory -Path $cmdDirectory -Force | Out-Null
+    $cmdPath = Join-Path $cmdDirectory 'echo arguments.cmd'
+    [System.IO.File]::WriteAllText($cmdPath, "@echo off`r`necho %~1`r`n", [System.Text.Encoding]::ASCII)
+    $cmdResult = Invoke-NativeCommand -FilePath $cmdPath -ArgumentList @('value with spaces') -Quiet
+    if ($cmdResult.ExitCode -ne 0 -or $cmdResult.Text.Trim() -ne 'value with spaces') {
+        throw "CMD wrapper argument quoting failed: $($cmdResult.Text)"
+    }
+
     Initialize-SetupOutput -NoColor -OutputFormat Json
     $jsonLine = @(& { Write-SetupMessage -Message 'json-test' -Level Info -Event 'test-event' } 6>&1 | ForEach-Object { [string]$_ })[0]
     $json = $jsonLine | ConvertFrom-Json
