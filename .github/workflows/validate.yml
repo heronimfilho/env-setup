@@ -45,7 +45,15 @@ jobs:
 
       - name: Run runtime tests
         shell: powershell
-        run: .\tests\runtime.test.ps1
+        run: |
+          New-Item -ItemType Directory -Path test-diagnostics -Force | Out-Null
+          try {
+            & .\tests\runtime.test.ps1 *>&1 | Tee-Object -FilePath test-diagnostics\runtime.log
+          }
+          catch {
+            $_ | Format-List * -Force | Out-String | Tee-Object -FilePath test-diagnostics\runtime-error.log
+            exit 1
+          }
 
       - name: Run task progress tests
         shell: powershell
@@ -83,6 +91,15 @@ jobs:
         shell: powershell
         run: .\tests\entrypoints.test.ps1
 
+      - name: Upload PowerShell failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: powershell-failure-diagnostics
+          path: test-diagnostics
+          if-no-files-found: ignore
+          retention-days: 7
+
   shell-and-docs:
     runs-on: ubuntu-latest
 
@@ -96,10 +113,18 @@ jobs:
         run: shellcheck configure-zsh.sh install-node.sh tests/configure-zsh.test.sh tests/node.test.sh
 
       - name: Run Zsh setup tests
-        run: bash tests/configure-zsh.test.sh
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p test-diagnostics
+          bash tests/configure-zsh.test.sh 2>&1 | tee test-diagnostics/configure-zsh.log
 
       - name: Run NVM and Node setup tests
-        run: bash tests/node.test.sh
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p test-diagnostics
+          bash tests/node.test.sh 2>&1 | tee test-diagnostics/node.log
 
       - name: Validate JSON
         run: |
@@ -132,4 +157,13 @@ jobs:
           name: immutable-archive-checksum
           path: /tmp/archive-checksum.json
           if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload shell failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: shell-failure-diagnostics
+          path: test-diagnostics
+          if-no-files-found: ignore
           retention-days: 7
