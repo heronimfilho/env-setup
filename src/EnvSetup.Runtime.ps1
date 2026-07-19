@@ -37,7 +37,7 @@ function Write-SetupMessage {
     if ($script:EnvSetupOutputFormat -eq 'Json') {
         $payload = [ordered]@{ timestamp = $timestamp; event = $Event; level = $Level.ToLowerInvariant(); message = $Message }
         if ($null -ne $Data) { $payload.data = $Data }
-        Write-Output ($payload | ConvertTo-Json -Depth 12 -Compress)
+        Write-Host ($payload | ConvertTo-Json -Depth 12 -Compress)
         return
     }
     if ($script:EnvSetupNoColor) { Write-Host $Message; return }
@@ -54,7 +54,7 @@ function Write-SetupMessage {
 function Write-SetupObject {
     param([Parameter(Mandatory = $true)]$Value, [string]$Event = 'result')
     if ($script:EnvSetupOutputFormat -eq 'Json') {
-        Write-Output ([ordered]@{ timestamp = (Get-Date).ToUniversalTime().ToString('o'); event = $Event; data = $Value } | ConvertTo-Json -Depth 20 -Compress)
+        Write-Host ([ordered]@{ timestamp = (Get-Date).ToUniversalTime().ToString('o'); event = $Event; data = $Value } | ConvertTo-Json -Depth 20 -Compress)
         return
     }
     $Value | Format-Table -AutoSize | Out-Host
