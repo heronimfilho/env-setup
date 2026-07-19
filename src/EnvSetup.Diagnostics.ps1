@@ -72,6 +72,7 @@ function Get-EnvSetupDoctorChecks {
     }
     catch { $checks.Add((New-DoctorCheck -Name 'Firmware virtualization' -Status 'warning' -Details $_.Exception.Message -Code 'ENVSETUP-DOCTOR-VIRTUALIZATION')) }
 
+    Write-SetupMessage -Message '  Checking WSL status...' -Level Muted -Event 'doctor-check-start' -Data @{ check = 'wsl' }
     try {
         $wslStatus = Invoke-NativeCommand -FilePath 'wsl.exe' -ArgumentList @('--status') -AllowFailure -Quiet -TimeoutSeconds 30
         $wslDetails = if ([string]::IsNullOrWhiteSpace($wslStatus.Text)) { "Exit code $($wslStatus.ExitCode)." } else { ($wslStatus.Text -replace '\s+', ' ').Trim() }
@@ -85,6 +86,7 @@ function Get-EnvSetupDoctorChecks {
             @{ Name = 'Microsoft downloads'; Host = 'aka.ms' },
             @{ Name = 'WinGet CDN'; Host = 'cdn.winget.microsoft.com' }
         )) {
+            Write-SetupMessage -Message ("  Checking {0} connectivity..." -f $endpoint.Name) -Level Muted -Event 'doctor-check-start' -Data @{ check = 'network'; host = $endpoint.Host }
             try {
                 $reachable = Test-NetConnection -ComputerName $endpoint.Host -Port 443 -InformationLevel Quiet -WarningAction SilentlyContinue
                 $codeSuffix = ($endpoint.Name -replace '[^A-Za-z0-9]', '').ToUpperInvariant()
@@ -164,8 +166,13 @@ function Show-LastEnvSetupLog {
     $logDirectory = Join-Path $Paths.RootPath 'logs'
     $log = Get-ChildItem -LiteralPath $logDirectory -Filter '*.log' -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
     if ($null -eq $log) { throw 'No setup log was found.' }
+    $content = Get-Content -LiteralPath $log.FullName -Raw
+    if ($script:EnvSetupOutputFormat -eq 'Json') {
+        Write-SetupObject -Value ([pscustomobject]@{ path = $log.FullName; content = $content }) -Event 'last-log'
+        return
+    }
     Write-SetupMessage -Message "Last log: $($log.FullName)" -Level Info
-    Get-Content -LiteralPath $log.FullName
+    Write-Host $content
 }
 
 function Protect-DiagnosticText {
@@ -174,7 +181,12 @@ function Protect-DiagnosticText {
     $result = $Text
     if (-not [string]::IsNullOrWhiteSpace($HOME)) { $result = $result.Replace($HOME, '%USERPROFILE%') }
     $result = [regex]::Replace($result, '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}', '<redacted-email>')
-    $result = [regex]::Replace($result, '(?i)(token|password|secret|passphrase)\s*[:=]\s*\S+', '$1=<redacted>')
+    $result = [regex]::Replace($result, '(?i)("(?:token|password|secret|passphrase)"\s*:\s*")[^"]*(")', '$1<redacted>$2')
+    $result = [regex]::Replace($result, "(?i)('(?:token|password|secret|passphrase)'\s*:\s*')[^']*(')", '$1<redacted>$2')
+    $result = [regex]::Replace($result, '(?i)((?:token|password|secret|passphrase)\s*[:=]\s*)(?:"[^"]*"|''[^'']*''|\S+)', '$1<redacted>')
+    $result = [regex]::Replace($result, '(?i)(authorization\s*:\s*(?:bearer|basic)\s+)\S+', '$1<redacted>')
+    $result = [regex]::Replace($result, '\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}\b', '<redacted-token>')
+    $result = [regex]::Replace($result, '\b(?:AKIA|ASIA)[A-Z0-9]{16}\b', '<redacted-access-key>')
     $result = [regex]::Replace($result, '-----BEGIN [^-]+ PRIVATE KEY-----[\s\S]*?-----END [^-]+ PRIVATE KEY-----', '<redacted-private-key>')
     return $result
 }
