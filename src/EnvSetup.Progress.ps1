@@ -38,17 +38,33 @@ function Invoke-TaskOperation {
     $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
 
     try {
-        $command = $Task.PSObject.Properties[$Operation].Value
-        $result = & $command $Context
+        $commandProperty = $Task.PSObject.Properties[$Operation]
+        if ($null -eq $commandProperty -or $commandProperty.Value -isnot [scriptblock]) {
+            throw "Task '$($Task.Id)' does not define a valid $Operation operation."
+        }
+
+        $result = & $commandProperty.Value $Context
         $stopwatch.Stop()
         Write-SetupMessage -Message ("  {0} finished in {1}." -f $operationLabel, (Format-SetupDuration -Elapsed $stopwatch.Elapsed)) -Level Muted
         return $result
     }
     catch {
         $stopwatch.Stop()
-        Write-SetupMessage -Message ("  {0} failed after {1}." -f $operationLabel, (Format-SetupDuration -Elapsed $stopwatch.Elapsed)) -Level Error
         throw
     }
+}
+
+function Set-TaskExecutionPhase {
+    param(
+        [Parameter(Mandatory = $true)]$Context,
+        [Parameter(Mandatory = $true)][string]$TaskId,
+        [Parameter(Mandatory = $true)][string]$Phase
+    )
+
+    if ($Context.Check -or $Context.DryRun) { return }
+
+    Set-StateTask -State $Context.State -TaskId $TaskId -Status 'running' -Details @{ phase = $Phase }
+    Write-JsonFileAtomic -Value $Context.State -Path $Context.Paths.StatePath
 }
 
 function Invoke-SetupTask {
@@ -67,6 +83,7 @@ function Invoke-SetupTask {
     $currentPhase = 'state check'
 
     try {
+        Set-TaskExecutionPhase -Context $Context -TaskId $taskId -Phase 'checking'
         $alreadyConfigured = [bool](Invoke-TaskOperation -Task $Task -Context $Context -Operation Detect)
         if ($alreadyConfigured) {
             Write-SetupMessage -Message '  Current state: configured.' -Level Success
@@ -102,17 +119,20 @@ function Invoke-SetupTask {
             return
         }
 
+        if ($alreadyConfigured -and $Context.Repair) {
+            Write-SetupMessage -Message '  Repair mode is enabled; the configured task will be applied again.' -Level Warning
+        }
+
         if ($Task.RequiresAdmin -and -not $Context.IsAdministrator) {
             throw 'This task requires an elevated PowerShell session.'
         }
 
-        Set-StateTask -State $Context.State -TaskId $taskId -Status 'running'
-        Write-JsonFileAtomic -Value $Context.State -Path $Context.Paths.StatePath
-
         $currentPhase = 'apply phase'
+        Set-TaskExecutionPhase -Context $Context -TaskId $taskId -Phase 'applying'
         Invoke-TaskOperation -Task $Task -Context $Context -Operation Apply | Out-Null
 
         $currentPhase = 'verification'
+        Set-TaskExecutionPhase -Context $Context -TaskId $taskId -Phase 'verifying'
         if (-not [bool](Invoke-TaskOperation -Task $Task -Context $Context -Operation Verify)) {
             throw 'Verification failed after applying the task.'
         }
@@ -125,7 +145,7 @@ function Invoke-SetupTask {
     catch {
         $taskStopwatch.Stop()
         if (-not $Context.Check -and -not $Context.DryRun) {
-            Set-StateTask -State $Context.State -TaskId $taskId -Status 'failed' -Message $_.Exception.Message
+            Set-StateTask -State $Context.State -TaskId $taskId -Status 'failed' -Message $_.Exception.Message -Details @{ phase = $currentPhase }
             Write-JsonFileAtomic -Value $Context.State -Path $Context.Paths.StatePath
         }
         Write-SetupMessage -Message ("  Task failed during {0} after {1}: {2}" -f $currentPhase, (Format-SetupDuration -Elapsed $taskStopwatch.Elapsed), $_.Exception.Message) -Level Error
