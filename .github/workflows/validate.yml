@@ -133,10 +133,18 @@ jobs:
           done
 
       - name: Lint Markdown
-        run: npx --yes markdownlint-cli2@0.18.1 "**/*.md" "#.git/**"
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p test-diagnostics
+          npx --yes markdownlint-cli2@0.18.1 "**/*.md" "#.git/**" 2>&1 | tee test-diagnostics/markdownlint.log
 
       - name: Validate GitHub Actions
-        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p test-diagnostics
+          go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 2>&1 | tee test-diagnostics/actionlint.log
 
       - name: Scan repository for common secret formats
         run: python tests/secret-scan.py
