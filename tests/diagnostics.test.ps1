@@ -26,8 +26,16 @@ try {
     [void](Export-EnvSetupPlan -Paths $paths -Destination $exportPath)
     if (-not (Test-Path -LiteralPath $exportPath)) { throw 'Plan export did not create the destination file.' }
 
-    $protected = Protect-DiagnosticText -Text "user=person@example.com password=secret home=$HOME"
-    if ($protected -match 'person@example.com|password=secret' -or $protected -notmatch '<redacted-email>') { throw 'Diagnostic sanitization did not redact sensitive values.' }
+    $sensitiveText = @'
+user=person@example.com password=plain-secret
+{"password":"json-secret","token":"json-token"}
+Authorization: Bearer authorization-secret
+'@
+    $protected = Protect-DiagnosticText -Text $sensitiveText
+    foreach ($sensitiveValue in @('person@example.com', 'plain-secret', 'json-secret', 'json-token', 'authorization-secret')) {
+        if ($protected.Contains($sensitiveValue)) { throw "Diagnostic sanitization did not redact: $sensitiveValue" }
+    }
+    if ($protected -notmatch '<redacted-email>' -or $protected -notmatch '<redacted>') { throw 'Diagnostic sanitization did not include redaction markers.' }
 
     function Get-EnvSetupDoctorChecks {
         param([switch]$SkipNetwork)
@@ -47,6 +55,11 @@ try {
     $redactedLog = Get-Content -LiteralPath (Join-Path $expandedPath 'last-log.redacted.txt') -Raw
     if ($redactedLog -match 'person@example.com|password=secret') { throw 'Diagnostics bundle contains unredacted sensitive values.' }
 
+    Initialize-SetupOutput -NoColor -OutputFormat Json
+    $jsonLog = @(& { Show-LastEnvSetupLog -Paths $paths } 6>&1 | ForEach-Object { [string]$_ })
+    if ($jsonLog.Count -ne 1 -or ($jsonLog[0] | ConvertFrom-Json).event -ne 'last-log') { throw 'JSON last-log output is not a single valid event.' }
+
+    Initialize-SetupOutput -NoColor -OutputFormat Text
     Reset-EnvSetupSelections -Paths $paths -Force
     if (Test-Path -LiteralPath $paths.PlanPath) { throw 'Reset selections did not remove plan.json.' }
 
