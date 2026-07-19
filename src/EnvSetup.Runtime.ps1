@@ -4,19 +4,22 @@ $script:EnvSetupNoColor = $false
 $script:EnvSetupOutputFormat = 'Text'
 $script:EnvSetupLogPath = $null
 $script:EnvSetupHeartbeatSeconds = 10
+$script:EnvSetupCommandTimeoutSeconds = 0
 
 function Initialize-SetupOutput {
     param(
         [switch]$NoColor,
         [ValidateSet('Text', 'Json')][string]$OutputFormat = 'Text',
         [string]$LogPath,
-        [int]$HeartbeatSeconds = 10
+        [int]$HeartbeatSeconds = 10,
+        [int]$CommandTimeoutSeconds = 0
     )
 
     $script:EnvSetupNoColor = [bool]$NoColor
     $script:EnvSetupOutputFormat = $OutputFormat
     $script:EnvSetupLogPath = $LogPath
     $script:EnvSetupHeartbeatSeconds = [Math]::Max(2, $HeartbeatSeconds)
+    $script:EnvSetupCommandTimeoutSeconds = [Math]::Max(0, $CommandTimeoutSeconds)
 }
 
 function Write-SetupMessage {
@@ -30,29 +33,18 @@ function Write-SetupMessage {
     $timestamp = (Get-Date).ToUniversalTime().ToString('o')
     if (-not [string]::IsNullOrWhiteSpace($script:EnvSetupLogPath)) {
         $directory = Split-Path -Parent $script:EnvSetupLogPath
-        if (-not (Test-Path -LiteralPath $directory)) {
-            New-Item -ItemType Directory -Path $directory -Force | Out-Null
-        }
+        if (-not (Test-Path -LiteralPath $directory)) { New-Item -ItemType Directory -Path $directory -Force | Out-Null }
         Add-Content -LiteralPath $script:EnvSetupLogPath -Value ("{0} [{1}] {2}" -f $timestamp, $Level.ToUpperInvariant(), $Message) -Encoding UTF8
     }
 
     if ($script:EnvSetupOutputFormat -eq 'Json') {
-        $payload = [ordered]@{
-            timestamp = $timestamp
-            event     = $Event
-            level     = $Level.ToLowerInvariant()
-            message   = $Message
-        }
+        $payload = [ordered]@{ timestamp = $timestamp; event = $Event; level = $Level.ToLowerInvariant(); message = $Message }
         if ($null -ne $Data) { $payload.data = $Data }
         Write-Output ($payload | ConvertTo-Json -Depth 12 -Compress)
         return
     }
 
-    if ($script:EnvSetupNoColor) {
-        Write-Host $Message
-        return
-    }
-
+    if ($script:EnvSetupNoColor) { Write-Host $Message; return }
     $color = switch ($Level) {
         'Success' { 'Green' }
         'Warning' { 'Yellow' }
@@ -64,26 +56,21 @@ function Write-SetupMessage {
 }
 
 function Write-SetupObject {
-    param(
-        [Parameter(Mandatory = $true)]$Value,
-        [string]$Event = 'result'
-    )
-
+    param([Parameter(Mandatory = $true)]$Value, [string]$Event = 'result')
     if ($script:EnvSetupOutputFormat -eq 'Json') {
-        Write-Output ([ordered]@{
-            timestamp = (Get-Date).ToUniversalTime().ToString('o')
-            event     = $Event
-            data      = $Value
-        } | ConvertTo-Json -Depth 20 -Compress)
+        Write-Output ([ordered]@{ timestamp = (Get-Date).ToUniversalTime().ToString('o'); event = $Event; data = $Value } | ConvertTo-Json -Depth 20 -Compress)
         return
     }
-
     $Value | Format-Table -AutoSize | Out-Host
+}
+
+function Write-MenuText {
+    param([Parameter(Mandatory = $true)][string]$Text, [ConsoleColor]$Color = [ConsoleColor]::Gray)
+    if ($script:EnvSetupNoColor) { Write-Host $Text } else { Write-Host $Text -ForegroundColor $Color }
 }
 
 function ConvertTo-NativeCommandLineArgument {
     param([AllowEmptyString()][string]$Value)
-
     if ($null -eq $Value) { return '""' }
     if ($Value -notmatch '[\s"]') { return $Value }
 
@@ -91,20 +78,14 @@ function ConvertTo-NativeCommandLineArgument {
     [void]$builder.Append('"')
     $backslashes = 0
     foreach ($character in $Value.ToCharArray()) {
-        if ($character -eq '\') {
-            $backslashes++
-            continue
-        }
+        if ($character -eq '\') { $backslashes++; continue }
         if ($character -eq '"') {
             [void]$builder.Append(('\' * (($backslashes * 2) + 1)))
             [void]$builder.Append('"')
             $backslashes = 0
             continue
         }
-        if ($backslashes -gt 0) {
-            [void]$builder.Append(('\' * $backslashes))
-            $backslashes = 0
-        }
+        if ($backslashes -gt 0) { [void]$builder.Append(('\' * $backslashes)); $backslashes = 0 }
         [void]$builder.Append($character)
     }
     if ($backslashes -gt 0) { [void]$builder.Append(('\' * ($backslashes * 2))) }
@@ -118,7 +99,7 @@ function Invoke-NativeCommand {
         [string[]]$ArgumentList = @(),
         [switch]$AllowFailure,
         [switch]$Quiet,
-        [int]$TimeoutSeconds = 0,
+        [int]$TimeoutSeconds = $script:EnvSetupCommandTimeoutSeconds,
         [int]$HeartbeatSeconds = $script:EnvSetupHeartbeatSeconds
     )
 
@@ -127,12 +108,18 @@ function Invoke-NativeCommand {
     $resolvedPath = if (-not [string]::IsNullOrWhiteSpace($command.Source)) { $command.Source } else { $command.Path }
     if ([string]::IsNullOrWhiteSpace($resolvedPath)) { $resolvedPath = $FilePath }
 
+    $argumentString = (@($ArgumentList | ForEach-Object { ConvertTo-NativeCommandLineArgument -Value ([string]$_) }) -join ' ')
+    if ([System.IO.Path]::GetExtension($resolvedPath) -in @('.cmd', '.bat')) {
+        $scriptCommand = ('"{0}" {1}' -f $resolvedPath, $argumentString).Trim()
+        $resolvedPath = if ([string]::IsNullOrWhiteSpace($env:ComSpec)) { 'cmd.exe' } else { $env:ComSpec }
+        $argumentString = "/d /s /c " + (ConvertTo-NativeCommandLineArgument -Value $scriptCommand)
+    }
+
     $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("env-setup-process-{0}" -f [guid]::NewGuid().ToString('N'))
     $stdoutPath = Join-Path $tempRoot 'stdout.txt'
     $stderrPath = Join-Path $tempRoot 'stderr.txt'
     New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
 
-    $argumentString = (@($ArgumentList | ForEach-Object { ConvertTo-NativeCommandLineArgument -Value ([string]$_) }) -join ' ')
     $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
     $lastHeartbeat = [TimeSpan]::Zero
     $stdoutCount = 0
@@ -146,12 +133,10 @@ function Invoke-NativeCommand {
                 Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
                 throw "Command timed out after $TimeoutSeconds seconds: $FilePath"
             }
-
             if (($stopwatch.Elapsed - $lastHeartbeat).TotalSeconds -ge $HeartbeatSeconds) {
                 $lastHeartbeat = $stopwatch.Elapsed
                 Write-SetupMessage -Message ("    Still working - {0:N0} seconds elapsed (PID {1})." -f $stopwatch.Elapsed.TotalSeconds, $process.Id) -Level Muted -Event 'heartbeat' -Data @{ pid = $process.Id; elapsedSeconds = [Math]::Round($stopwatch.Elapsed.TotalSeconds) }
             }
-
             if (-not $Quiet) {
                 $stdout = @(Get-Content -LiteralPath $stdoutPath -ErrorAction SilentlyContinue)
                 if ($stdout.Count -gt $stdoutCount) {
@@ -180,44 +165,25 @@ function Invoke-NativeCommand {
             $message = if ($output.Count -gt 0) { $output -join [Environment]::NewLine } else { 'No output was returned.' }
             throw "$FilePath exited with code $($process.ExitCode).$([Environment]::NewLine)$message"
         }
-
         return [pscustomobject]@{
-            ExitCode = $process.ExitCode
-            Output   = $output
-            Text     = ($output -join [Environment]::NewLine)
-            Duration = $stopwatch.Elapsed
-            ProcessId = $process.Id
+            ExitCode = $process.ExitCode; Output = $output; Text = ($output -join [Environment]::NewLine)
+            Duration = $stopwatch.Elapsed; ProcessId = $process.Id
         }
     }
-    finally {
-        Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
-    }
+    finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
 }
 
 function Invoke-CodeCommand {
-    param(
-        [Parameter(Mandatory = $true)][string[]]$ArgumentList,
-        [switch]$AllowFailure,
-        [switch]$Quiet
-    )
-
+    param([Parameter(Mandatory = $true)][string[]]$ArgumentList, [switch]$AllowFailure, [switch]$Quiet)
     $code = Get-CodeCommand
-    if ([string]::IsNullOrWhiteSpace($code)) {
-        throw 'The Visual Studio Code command line was not found. Restart the terminal after installation and resume setup.'
-    }
+    if ([string]::IsNullOrWhiteSpace($code)) { throw 'The Visual Studio Code command line was not found. Restart the terminal after installation and resume setup.' }
     return Invoke-NativeCommand -FilePath $code -ArgumentList $ArgumentList -AllowFailure:$AllowFailure -Quiet:$Quiet
 }
 
 function Show-MultiSelectMenu {
-    param(
-        [Parameter(Mandatory = $true)][string]$Title,
-        [Parameter(Mandatory = $true)][object[]]$Items
-    )
-
+    param([Parameter(Mandatory = $true)][string]$Title, [Parameter(Mandatory = $true)][object[]]$Items)
     if ($script:EnvSetupOutputFormat -eq 'Json') { throw 'The interactive menu is not available with JSON output. Use -Profile, -Config, or -Include.' }
-    if ([Console]::IsInputRedirected -or [Console]::IsOutputRedirected) {
-        throw 'The interactive menu requires a terminal. Use -Profile, -Include, or -Resume for non-interactive execution.'
-    }
+    if ([Console]::IsInputRedirected -or [Console]::IsOutputRedirected) { throw 'The interactive menu requires a terminal. Use -Profile, -Include, or -Resume for non-interactive execution.' }
 
     $selected = @{}
     foreach ($item in $Items) { $selected[$item.Id] = [bool]$item.Selected }
@@ -230,10 +196,9 @@ function Show-MultiSelectMenu {
         while ($true) {
             [Console]::SetCursorPosition(0, $top)
             $count = @($Items | Where-Object { $selected[$_.Id] }).Count
-            Write-Host ("{0} ({1}/{2} selected)" -f $Title, $count, $Items.Count) -ForegroundColor Cyan
-            Write-Host 'Up/Down move | Space toggle | A all | N none | D defaults | C Core | B Backend | F Full | S search | Enter continue' -ForegroundColor DarkGray
+            Write-MenuText -Text ("{0} ({1}/{2} selected)" -f $Title, $count, $Items.Count) -Color Cyan
+            Write-MenuText -Text 'Up/Down move | Space toggle | A all | N none | D defaults | C Core | B Backend | F Full | S search | Enter continue' -Color DarkGray
             Write-Host ''
-
             for ($i = 0; $i -lt $Items.Count; $i++) {
                 $item = $Items[$i]
                 $cursor = if ($i -eq $index) { '>' } else { ' ' }
@@ -242,7 +207,7 @@ function Show-MultiSelectMenu {
                 $dependency = if ([int]$item.DependencyCount -gt 0) { " (+$($item.DependencyCount) dependencies)" } else { '' }
                 $line = "{0} [{1}] {2}{3}{4}" -f $cursor, $mark, $item.Label, $status, $dependency
                 $padding = [Math]::Max(0, [Console]::WindowWidth - $line.Length - 1)
-                Write-Host ($line + (' ' * $padding)) -ForegroundColor $(if ($i -eq $index) { 'White' } else { 'Gray' })
+                Write-MenuText -Text ($line + (' ' * $padding)) -Color $(if ($i -eq $index) { 'White' } else { 'Gray' })
             }
 
             $key = [Console]::ReadKey($true)
@@ -272,11 +237,7 @@ function Show-MultiSelectMenu {
             if ($key.Key -eq 'Enter') { break }
         }
     }
-    finally {
-        [Console]::CursorVisible = $previousCursorVisible
-        Write-Host ''
-    }
-
+    finally { [Console]::CursorVisible = $previousCursorVisible; Write-Host '' }
     return @($Items | Where-Object { $selected[$_.Id] } | ForEach-Object { $_.Id })
 }
 
@@ -287,9 +248,7 @@ function Show-SetupPlanPreview {
         [Parameter(Mandatory = $true)][string[]]$OrderedTaskIds,
         [switch]$NonInteractive
     )
-
-    $taskMap = @{}
-    foreach ($task in $Tasks) { $taskMap[$task.Id] = $task }
+    $taskMap = @{}; foreach ($task in $Tasks) { $taskMap[$task.Id] = $task }
     $dependencyIds = @($OrderedTaskIds | Where-Object { $_ -notin $SelectedTaskIds })
     $categories = @($OrderedTaskIds | ForEach-Object { $taskMap[$_].Category } | Group-Object | Sort-Object Name)
     $interactiveIds = @($OrderedTaskIds | Where-Object { $_ -in @('github.authenticate', 'ssh.windows-key', 'wsl.initialize') })
@@ -302,7 +261,6 @@ function Show-SetupPlanPreview {
     foreach ($category in $categories) { Write-SetupMessage -Message ("  {0}: {1}" -f $category.Name, $category.Count) -Level Muted }
     Write-SetupMessage -Message ("  Interactive tasks: {0}" -f $interactiveIds.Count) -Level Muted
     Write-SetupMessage -Message ("  Restart may be required: {0}" -f $(if ($restartLikely) { 'yes' } else { 'no' })) -Level $(if ($restartLikely) { 'Warning' } else { 'Muted' })
-
     if (-not $NonInteractive -and -not [Console]::IsInputRedirected) {
         if (-not (Read-YesNo -Prompt 'Continue with this plan?' -Default $true)) { throw 'Setup cancelled by the user.' }
     }
