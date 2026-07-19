@@ -1,0 +1,34 @@
+#requires -version 5.1
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+$projectRoot = Split-Path -Parent $PSScriptRoot
+. (Join-Path $projectRoot 'src/EnvSetup.Core.ps1')
+. (Join-Path $projectRoot 'src/EnvSetup.Runtime.ps1')
+
+$tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("env-setup-runtime-{0}" -f [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
+try {
+    $logPath = Join-Path $tempRoot 'runtime.log'
+    Initialize-SetupOutput -NoColor -OutputFormat Text -LogPath $logPath -HeartbeatSeconds 2
+    $messages = @(& {
+        Invoke-NativeCommand -FilePath 'powershell.exe' -ArgumentList @('-NoProfile', '-Command', 'Start-Sleep -Seconds 3; Write-Output done') -Quiet
+    } 6>&1 | ForEach-Object { [string]$_ })
+    if (($messages -join "`n") -notmatch 'Still working') { throw 'A long-running native process did not emit a heartbeat.' }
+    if (-not (Test-Path -LiteralPath $logPath)) { throw 'Runtime messages were not written to the execution log.' }
+
+    $timedOut = $false
+    try {
+        Invoke-NativeCommand -FilePath 'powershell.exe' -ArgumentList @('-NoProfile', '-Command', 'Start-Sleep -Seconds 3') -Quiet -TimeoutSeconds 1 | Out-Null
+    }
+    catch { $timedOut = $_.Exception.Message -match 'timed out' }
+    if (-not $timedOut) { throw 'Native command timeout was not enforced.' }
+
+    Initialize-SetupOutput -NoColor -OutputFormat Json
+    $jsonLine = @(Write-SetupMessage -Message 'json-test' -Level Info -Event 'test-event')[0]
+    $json = $jsonLine | ConvertFrom-Json
+    if ($json.event -ne 'test-event' -or $json.message -ne 'json-test') { throw 'JSON output is invalid.' }
+
+    Write-Host 'Runtime tests passed.'
+}
+finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
