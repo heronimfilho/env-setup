@@ -8,9 +8,12 @@ import re
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+THIS_FILE = pathlib.Path(__file__).resolve()
 EXCLUDED_PARTS = {".git", ".venv", "node_modules"}
+PRIVATE_KEY_PREFIX = "-----BEGIN "
+PRIVATE_KEY_SUFFIX = " PRIVATE KEY-----"
 PATTERNS = {
-    "private key": re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),
+    "private key": re.compile(re.escape(PRIVATE_KEY_PREFIX) + r"(?:RSA |EC |OPENSSH )?" + re.escape(PRIVATE_KEY_SUFFIX)),
     "GitHub token": re.compile(r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{30,}\b"),
     "AWS access key": re.compile(r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b"),
     "Slack token": re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{20,}\b"),
@@ -19,7 +22,7 @@ TEXT_SUFFIXES = {".ps1", ".psd1", ".psm1", ".sh", ".json", ".yml", ".yaml", ".md
 
 findings: list[str] = []
 for path in ROOT.rglob("*"):
-    if not path.is_file() or path.suffix.lower() not in TEXT_SUFFIXES:
+    if not path.is_file() or path.resolve() == THIS_FILE or path.suffix.lower() not in TEXT_SUFFIXES:
         continue
     if any(part in EXCLUDED_PARTS for part in path.parts):
         continue
