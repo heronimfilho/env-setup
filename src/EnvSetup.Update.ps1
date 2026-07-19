@@ -79,7 +79,7 @@ function Invoke-EnvSetupUpdate {
         $bootstrapUri = "https://raw.githubusercontent.com/heronimfilho/env-setup/$($manifest.commit)/bootstrap.ps1"
         Write-SetupMessage -Message "Downloading the verified updater for version $($manifest.version)..." -Level Muted -Event 'update-download'
         Invoke-WebRequest -Uri $bootstrapUri -OutFile $bootstrapPath -UseBasicParsing
-        & $bootstrapPath -Commit $manifest.commit -ArchiveSha256 $manifest.archiveSha256 -Destination $ProjectRoot -UpdateExisting -SkipRun
+        & $bootstrapPath -Commit $manifest.commit -ArchiveSha256 $manifest.archiveSha256 -Destination $ProjectRoot -UpdateExisting -SkipRun -Quiet
     }
 
     Write-SetupMessage -Message "env-setup was updated from $currentVersion to $($manifest.version). Run setup.ps1 again to use the new version." -Level Success -Event 'update-complete'
