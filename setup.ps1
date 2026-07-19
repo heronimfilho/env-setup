@@ -85,7 +85,10 @@ $ErrorActionPreference = 'Stop'
 
 if ($Check -and $DryRun) { throw 'Use either -Check or -DryRun, not both.' }
 if ($Repair -and ($Check -or $DryRun)) { throw '-Repair cannot be combined with -Check or -DryRun.' }
-if ($OutputFormat -eq 'Json' -and $Profile -eq 'Interactive' -and -not ($Doctor -or $ListTasks -or $Status -or $ExportConfig -or $ShowLastLog -or $CollectDiagnostics -or $Update -or $Version -or $ResetSelections)) {
+
+$isManagementCommand = $Doctor -or $ListTasks -or $Status -or -not [string]::IsNullOrWhiteSpace($ExportConfig) -or $ResetSelections -or $ShowLastLog -or $CollectDiagnostics -or $Update -or $Version
+$hasExplicitPlan = $Resume -or $Profile -ne 'Interactive' -or -not [string]::IsNullOrWhiteSpace($Config) -or $Include.Count -gt 0
+if ($OutputFormat -eq 'Json' -and -not $isManagementCommand -and -not $hasExplicitPlan) {
     throw 'Interactive selection is not available with -OutputFormat Json. Use -Profile, -Config, -Include, or -Resume.'
 }
 
