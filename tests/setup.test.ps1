@@ -7,13 +7,23 @@ $projectRoot = Split-Path -Parent $PSScriptRoot
 $setupPath = Join-Path $projectRoot 'setup.ps1'
 $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("env-setup-integration-{0}" -f [guid]::NewGuid().ToString('N'))
 $previousLocalAppData = $env:LOCALAPPDATA
+$previousPath = $env:PATH
 New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
 
-function global:winget.exe {
-    $global:LASTEXITCODE = 0
-}
-
 try {
+    $mockBin = Join-Path $tempRoot 'bin'
+    New-Item -ItemType Directory -Path $mockBin -Force | Out-Null
+    $mockWinget = Join-Path $mockBin 'winget.exe'
+    Add-Type -TypeDefinition @'
+using System;
+public static class WingetStub {
+    public static int Main(string[] args) {
+        return 0;
+    }
+}
+'@ -OutputAssembly $mockWinget -OutputType ConsoleApplication
+    $env:PATH = "$mockBin;$previousPath"
+
     foreach ($mode in @('Check', 'DryRun')) {
         $dataPath = Join-Path $tempRoot $mode.ToLowerInvariant()
         $env:LOCALAPPDATA = $dataPath
@@ -59,7 +69,7 @@ try {
     Write-Host 'Setup integration tests passed.'
 }
 finally {
-    Remove-Item Function:\winget.exe -ErrorAction SilentlyContinue
     $env:LOCALAPPDATA = $previousLocalAppData
+    $env:PATH = $previousPath
     Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
