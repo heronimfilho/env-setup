@@ -10,11 +10,13 @@ permissions:
   contents: read
 
 jobs:
-  powershell:
+  powershell-lint:
     runs-on: windows-latest
 
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
 
       - name: Validate PowerShell syntax
         shell: pwsh
@@ -23,7 +25,12 @@ jobs:
           foreach ($file in $files) {
             $tokens = $null
             $errors = $null
-            [System.Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$tokens, [ref]$errors) | Out-Null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              $file.FullName,
+              [ref]$tokens,
+              [ref]$errors
+            ) | Out-Null
+
             if ($errors.Count -gt 0) {
               $errors | ForEach-Object { Write-Error $_ }
               exit 1
@@ -39,63 +46,79 @@ jobs:
           $issues | Format-Table -AutoSize
           if ($issues.Count -gt 0) { exit 1 }
 
+  powershell-tests:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shell:
+          - powershell
+          - pwsh
+
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
       - name: Run setup core tests
-        shell: powershell
+        shell: ${{ matrix.shell }}
         run: .\tests\core.test.ps1
 
       - name: Run runtime tests
-        shell: powershell
+        shell: ${{ matrix.shell }}
         run: |
           New-Item -ItemType Directory -Path test-diagnostics -Force | Out-Null
           try {
-            & .\tests\runtime.test.ps1 *>&1 | Tee-Object -FilePath test-diagnostics\runtime.log
+            & .\tests\runtime.test.ps1 *>&1 |
+              Tee-Object -FilePath test-diagnostics\runtime.log
           }
           catch {
-            $_ | Format-List * -Force | Out-String | Tee-Object -FilePath test-diagnostics\runtime-error.log
+            $_ | Format-List * -Force | Out-String |
+              Tee-Object -FilePath test-diagnostics\runtime-error.log
             exit 1
           }
 
       - name: Run task progress tests
-        shell: powershell
+        shell: ${{ matrix.shell }}
         run: .\tests\progress.test.ps1
 
       - name: Run diagnostics tests
-        shell: powershell
+        shell: ${{ matrix.shell }}
         run: .\tests\diagnostics.test.ps1
 
       - name: Run updater tests
-        shell: powershell
+        shell: ${{ matrix.shell }}
         run: .\tests\update.test.ps1
 
       - name: Run setup integration tests
-        shell: powershell
+        shell: ${{ matrix.shell }}
         run: .\tests\setup.test.ps1
 
       - name: Run Git configuration tests
-        shell: powershell
+        shell: ${{ matrix.shell }}
         run: .\tests\git.test.ps1
 
       - name: Run Visual Studio Code tests
-        shell: powershell
+        shell: ${{ matrix.shell }}
         run: .\tests\vscode.test.ps1
 
       - name: Run WSL task tests
-        shell: powershell
+        shell: ${{ matrix.shell }}
         run: .\tests\wsl.test.ps1
 
       - name: Run shell configuration tests
-        shell: powershell
+        shell: ${{ matrix.shell }}
         run: .\tests\shell.test.ps1
 
       - name: Run entrypoint tests
-        shell: powershell
+        shell: ${{ matrix.shell }}
         run: .\tests\entrypoints.test.ps1
 
       - name: Upload PowerShell failure diagnostics
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: powershell-failure-diagnostics
+          name: powershell-${{ matrix.shell }}-failure-diagnostics
           path: test-diagnostics
           if-no-files-found: ignore
           retention-days: 7
@@ -105,6 +128,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
 
       - name: Validate Bash syntax
         run: bash -n configure-zsh.sh install-node.sh tests/configure-zsh.test.sh tests/node.test.sh
@@ -117,34 +142,44 @@ jobs:
         run: |
           set -o pipefail
           mkdir -p test-diagnostics
-          bash tests/configure-zsh.test.sh 2>&1 | tee test-diagnostics/configure-zsh.log
+          bash tests/configure-zsh.test.sh 2>&1 |
+            tee test-diagnostics/configure-zsh.log
 
       - name: Run NVM and Node setup tests
         shell: bash
         run: |
           set -o pipefail
           mkdir -p test-diagnostics
-          bash tests/node.test.sh 2>&1 | tee test-diagnostics/node.log
+          bash tests/node.test.sh 2>&1 |
+            tee test-diagnostics/node.log
 
-      - name: Validate JSON
+      - name: Validate JSON syntax
         run: |
-          find . -name '*.json' -print0 | while IFS= read -r -d '' file; do
-            python -m json.tool "$file" > /dev/null
-          done
+          find . -name '*.json' -print0 |
+            while IFS= read -r -d '' file; do
+              python -m json.tool "$file" > /dev/null
+            done
+
+      - name: Validate JSON schemas
+        run: |
+          python -m pip install --disable-pip-version-check jsonschema==4.23.0
+          python tests/validate-json-schemas.py
 
       - name: Lint Markdown
         shell: bash
         run: |
           set -o pipefail
           mkdir -p test-diagnostics
-          npx --yes markdownlint-cli2@0.18.1 "**/*.md" "#.git/**" 2>&1 | tee test-diagnostics/markdownlint.log
+          npx --yes markdownlint-cli2@0.18.1 "**/*.md" "#.git/**" 2>&1 |
+            tee test-diagnostics/markdownlint.log
 
       - name: Validate GitHub Actions
         shell: bash
         run: |
           set -o pipefail
           mkdir -p test-diagnostics
-          go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 2>&1 | tee test-diagnostics/actionlint.log
+          go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 2>&1 |
+            tee test-diagnostics/actionlint.log
 
       - name: Scan repository for common secret formats
         run: python tests/secret-scan.py
@@ -154,9 +189,14 @@ jobs:
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           head_sha="${PR_HEAD_SHA:-$GITHUB_SHA}"
-          curl -fsSL "https://codeload.github.com/${GITHUB_REPOSITORY}/zip/${head_sha}" -o /tmp/env-setup.zip
+          curl -fsSL \
+            "https://codeload.github.com/${GITHUB_REPOSITORY}/zip/${head_sha}" \
+            -o /tmp/env-setup.zip
           checksum="$(sha256sum /tmp/env-setup.zip | awk '{print $1}')"
-          printf '{"commit":"%s","sha256":"%s"}\n' "$head_sha" "$checksum" > /tmp/archive-checksum.json
+          printf '{"commit":"%s","sha256":"%s"}\n' \
+            "$head_sha" \
+            "$checksum" \
+            > /tmp/archive-checksum.json
           cat /tmp/archive-checksum.json
 
       - name: Upload immutable archive checksum
