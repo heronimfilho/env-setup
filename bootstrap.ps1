@@ -21,12 +21,16 @@ $ErrorActionPreference = 'Stop'
 if ((Test-Path -LiteralPath $Destination) -and -not $UpdateExisting) {
     throw "The destination already exists. Remove it, choose another destination, or use -UpdateExisting: $Destination"
 }
+if ($UpdateExisting -and (Test-Path -LiteralPath (Join-Path $Destination '.git') -PathType Container)) {
+    throw 'The destination is a Git clone. Use setup.ps1 -Update so the clone can be updated with a verified fast-forward.'
+}
 
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("env-setup-{0}" -f [guid]::NewGuid().ToString('N'))
 $archivePath = Join-Path $tempRoot 'env-setup.zip'
 $extractPath = Join-Path $tempRoot 'extracted'
 $backupPath = Join-Path $tempRoot 'backup'
+$customProfilesPath = Join-Path $tempRoot 'custom-profiles'
 $archiveUrl = "https://codeload.github.com/heronimfilho/env-setup/zip/$Commit"
 
 try {
@@ -55,18 +59,36 @@ try {
     else {
         Write-Host "Updating the existing env-setup installation at: $Destination" -ForegroundColor Cyan
         New-Item -ItemType Directory -Path $backupPath -Force | Out-Null
-        Get-ChildItem -LiteralPath $Destination -Force | Where-Object { $_.Name -ne '.git' } | ForEach-Object {
+        Get-ChildItem -LiteralPath $Destination -Force | ForEach-Object {
             Copy-Item -LiteralPath $_.FullName -Destination $backupPath -Recurse -Force
         }
 
+        $existingProfiles = Join-Path $Destination 'profiles'
+        if (Test-Path -LiteralPath $existingProfiles -PathType Container) {
+            Get-ChildItem -LiteralPath $existingProfiles -Filter '*.json' -File -Recurse | Where-Object { $_.Name -ne 'custom.example.json' } | ForEach-Object {
+                $relativePath = $_.FullName.Substring($existingProfiles.Length).TrimStart('\')
+                $profileDestination = Join-Path $customProfilesPath $relativePath
+                New-Item -ItemType Directory -Path (Split-Path -Parent $profileDestination) -Force | Out-Null
+                Copy-Item -LiteralPath $_.FullName -Destination $profileDestination -Force
+            }
+        }
+
         try {
-            Get-ChildItem -LiteralPath $Destination -Force | Where-Object { $_.Name -ne '.git' } | Remove-Item -Recurse -Force
+            Get-ChildItem -LiteralPath $Destination -Force | Remove-Item -Recurse -Force
             Get-ChildItem -LiteralPath $source.FullName -Force | ForEach-Object {
                 Copy-Item -LiteralPath $_.FullName -Destination $Destination -Recurse -Force
             }
+            if (Test-Path -LiteralPath $customProfilesPath -PathType Container) {
+                Get-ChildItem -LiteralPath $customProfilesPath -File -Recurse | ForEach-Object {
+                    $relativePath = $_.FullName.Substring($customProfilesPath.Length).TrimStart('\')
+                    $profileDestination = Join-Path (Join-Path $Destination 'profiles') $relativePath
+                    New-Item -ItemType Directory -Path (Split-Path -Parent $profileDestination) -Force | Out-Null
+                    Copy-Item -LiteralPath $_.FullName -Destination $profileDestination -Force
+                }
+            }
         }
         catch {
-            Get-ChildItem -LiteralPath $Destination -Force | Where-Object { $_.Name -ne '.git' } | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+            Get-ChildItem -LiteralPath $Destination -Force | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
             Get-ChildItem -LiteralPath $backupPath -Force | ForEach-Object {
                 Copy-Item -LiteralPath $_.FullName -Destination $Destination -Recurse -Force
             }
