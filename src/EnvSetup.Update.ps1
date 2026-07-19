@@ -1,5 +1,15 @@
 Set-StrictMode -Version Latest
 
+function ConvertTo-SemanticVersionParts {
+    param([Parameter(Mandatory = $true)][string]$Version)
+    $match = [regex]::Match($Version, '^(?<core>\d+\.\d+\.\d+)(?:-(?<pre>[0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$')
+    if (-not $match.Success) { throw "Invalid semantic version: $Version" }
+    return [pscustomobject]@{
+        Core = [version]$match.Groups['core'].Value
+        Prerelease = [string]$match.Groups['pre'].Value
+    }
+}
+
 function Assert-EnvSetupReleaseManifest {
     param([Parameter(Mandatory = $true)]$Manifest)
     foreach ($property in @('version', 'commit', 'archiveSha256')) {
@@ -7,7 +17,7 @@ function Assert-EnvSetupReleaseManifest {
             throw "Release manifest is missing: $property"
         }
     }
-    if ([string]$Manifest.version -notmatch '^\d+\.\d+\.\d+([-.][0-9A-Za-z.-]+)?$') { throw 'Release manifest contains an invalid semantic version.' }
+    [void](ConvertTo-SemanticVersionParts -Version ([string]$Manifest.version))
     if ([string]$Manifest.commit -notmatch '^[0-9a-fA-F]{40}$') { throw 'Release manifest contains an invalid commit SHA.' }
     if ([string]$Manifest.archiveSha256 -notmatch '^[0-9a-fA-F]{64}$') { throw 'Release manifest contains an invalid archive SHA-256.' }
 }
@@ -23,9 +33,39 @@ function Get-EnvSetupReleaseManifest {
 
 function Compare-SemanticVersion {
     param([Parameter(Mandatory = $true)][string]$Left, [Parameter(Mandatory = $true)][string]$Right)
-    $leftCore = ($Left -split '[-+]')[0]
-    $rightCore = ($Right -split '[-+]')[0]
-    return ([version]$leftCore).CompareTo([version]$rightCore)
+    $leftParts = ConvertTo-SemanticVersionParts -Version $Left
+    $rightParts = ConvertTo-SemanticVersionParts -Version $Right
+    $coreComparison = $leftParts.Core.CompareTo($rightParts.Core)
+    if ($coreComparison -ne 0) { return $coreComparison }
+
+    $leftPre = $leftParts.Prerelease
+    $rightPre = $rightParts.Prerelease
+    if ([string]::IsNullOrWhiteSpace($leftPre) -and [string]::IsNullOrWhiteSpace($rightPre)) { return 0 }
+    if ([string]::IsNullOrWhiteSpace($leftPre)) { return 1 }
+    if ([string]::IsNullOrWhiteSpace($rightPre)) { return -1 }
+
+    $leftIdentifiers = @($leftPre -split '\.')
+    $rightIdentifiers = @($rightPre -split '\.')
+    $length = [Math]::Max($leftIdentifiers.Count, $rightIdentifiers.Count)
+    for ($index = 0; $index -lt $length; $index++) {
+        if ($index -ge $leftIdentifiers.Count) { return -1 }
+        if ($index -ge $rightIdentifiers.Count) { return 1 }
+
+        $leftIdentifier = $leftIdentifiers[$index]
+        $rightIdentifier = $rightIdentifiers[$index]
+        $leftNumber = 0L
+        $rightNumber = 0L
+        $leftNumeric = [long]::TryParse($leftIdentifier, [ref]$leftNumber)
+        $rightNumeric = [long]::TryParse($rightIdentifier, [ref]$rightNumber)
+        if ($leftNumeric -and $rightNumeric) {
+            $comparison = $leftNumber.CompareTo($rightNumber)
+        }
+        elseif ($leftNumeric) { return -1 }
+        elseif ($rightNumeric) { return 1 }
+        else { $comparison = [string]::CompareOrdinal($leftIdentifier, $rightIdentifier) }
+        if ($comparison -ne 0) { return $comparison }
+    }
+    return 0
 }
 
 function Update-EnvSetupGitClone {
@@ -39,20 +79,14 @@ function Update-EnvSetupGitClone {
     }
     $gitCommand = if (Test-CommandAvailable -Name 'git.exe') { 'git.exe' } else { 'git' }
     $status = Invoke-NativeCommand -FilePath $gitCommand -ArgumentList @('-C', $ProjectRoot, 'status', '--porcelain') -Quiet
-    if (-not [string]::IsNullOrWhiteSpace($status.Text)) {
-        throw 'The env-setup Git working tree has local changes. Commit or discard them before running -Update.'
-    }
+    if (-not [string]::IsNullOrWhiteSpace($status.Text)) { throw 'The env-setup Git working tree has local changes. Commit or discard them before running -Update.' }
     $branch = (Invoke-NativeCommand -FilePath $gitCommand -ArgumentList @('-C', $ProjectRoot, 'branch', '--show-current') -Quiet).Text.Trim()
-    if ($branch -ne 'main') {
-        throw "Self-update for Git clones requires the main branch. Current branch: $branch"
-    }
+    if ($branch -ne 'main') { throw "Self-update for Git clones requires the main branch. Current branch: $branch" }
 
     Invoke-NativeCommand -FilePath $gitCommand -ArgumentList @('-C', $ProjectRoot, 'fetch', '--prune', 'origin', 'main') | Out-Null
     Invoke-NativeCommand -FilePath $gitCommand -ArgumentList @('-C', $ProjectRoot, 'merge', '--ff-only', 'origin/main') | Out-Null
     $installedVersion = Get-EnvSetupVersion -ProjectRoot $ProjectRoot
-    if ($installedVersion -ne $ExpectedVersion) {
-        throw "Git update verification failed. Expected version $ExpectedVersion but installed version is $installedVersion."
-    }
+    if ($installedVersion -ne $ExpectedVersion) { throw "Git update verification failed. Expected version $ExpectedVersion but installed version is $installedVersion." }
 }
 
 function Invoke-EnvSetupUpdate {
