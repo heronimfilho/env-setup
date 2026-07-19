@@ -24,6 +24,9 @@ function New-WingetTask {
         Profiles      = $Profiles
         RequiresAdmin = $false
         Dependencies  = @()
+        DetectMessage = "Checking WinGet package state for $Name ($PackageId). The first WinGet query can take several minutes while sources initialize; wait for the state-check result..."
+        ApplyMessage  = "Installing $Name with WinGet ($PackageId)..."
+        VerifyMessage = "Verifying the WinGet installation for $Name ($PackageId)..."
         Detect        = [scriptblock]::Create("param(`$Context) Test-WingetPackageInstalled -PackageId $packageLiteral")
         Apply         = [scriptblock]::Create("param(`$Context) Install-WingetPackage -PackageId $packageLiteral")
         Verify        = [scriptblock]::Create("param(`$Context) Test-WingetPackageInstalled -PackageId $packageLiteral")
@@ -48,6 +51,9 @@ function New-VSCodeExtensionTask {
         Profiles      = $Profiles
         RequiresAdmin = $false
         Dependencies  = @('windows.vscode')
+        DetectMessage = "Checking the installed Visual Studio Code extensions for the '$Group' group..."
+        ApplyMessage  = "Installing missing Visual Studio Code extensions for the '$Group' group..."
+        VerifyMessage = "Verifying the Visual Studio Code extensions for the '$Group' group..."
         Detect        = [scriptblock]::Create("param(`$Context) Test-VSCodeExtensionGroup -Context `$Context -Group $groupLiteral")
         Apply         = [scriptblock]::Create("param(`$Context) Install-VSCodeExtensionGroup -Context `$Context -Group $groupLiteral")
         Verify        = [scriptblock]::Create("param(`$Context) Test-VSCodeExtensionGroup -Context `$Context -Group $groupLiteral")

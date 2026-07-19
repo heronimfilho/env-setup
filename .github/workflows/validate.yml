@@ -40,6 +40,10 @@ jobs:
         shell: powershell
         run: .\tests\core.test.ps1
 
+      - name: Run task progress tests
+        shell: powershell
+        run: .\tests\progress.test.ps1
+
       - name: Run setup integration tests
         shell: powershell
         run: .\tests\setup.test.ps1

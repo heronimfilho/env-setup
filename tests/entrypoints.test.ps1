@@ -5,6 +5,18 @@ $ErrorActionPreference = 'Stop'
 
 $projectRoot = Split-Path -Parent $PSScriptRoot
 
+$setup = Get-Content -LiteralPath (Join-Path $projectRoot 'setup.ps1') -Raw
+$windowsSettingsIndex = $setup.IndexOf('src/EnvSetup.WindowsSettings.ps1')
+$progressIndex = $setup.IndexOf('src/EnvSetup.Progress.ps1')
+if ($windowsSettingsIndex -lt 0 -or $progressIndex -lt 0 -or $progressIndex -le $windowsSettingsIndex) {
+    throw 'setup.ps1 must load the progress-aware task runner explicitly after all feature modules.'
+}
+
+$taskFactories = Get-Content -LiteralPath (Join-Path $projectRoot 'src/EnvSetup.TaskFactories.ps1') -Raw
+if ($taskFactories.Contains('EnvSetup.Progress.ps1')) {
+    throw 'Task factories must not load the progress runner implicitly.'
+}
+
 $installWsl = Get-Content -LiteralPath (Join-Path $projectRoot 'install-wsl.ps1') -Raw
 foreach ($required in @('setup.ps1', 'wsl.install')) {
     if (-not $installWsl.Contains($required)) {
@@ -38,7 +50,7 @@ foreach ($forbidden in @('refs/heads', "Branch = 'main'", 'Branch = "main"')) {
 }
 
 $readme = Get-Content -LiteralPath (Join-Path $projectRoot 'README.md') -Raw
-foreach ($required in @('8c9665ef174a14c063dba90b1a05b2ba7f2c2827', 'f979cb0124f57cbb389557a7a976eafe9866c3b8d6933b4bcc0669f5c078775f')) {
+foreach ($required in @('4d821a0080b467e01f4570f5f65a3c2a45fc54c2', '1a45b9402918d934f511d9ee840b0d5e58426649b5db0f668c7003ce666ffa65')) {
     if (-not $readme.Contains($required)) {
         throw "README.md is missing the pinned bootstrap value: $required"
     }
