@@ -74,4 +74,9 @@ try {
 
     Write-Host 'Progress reporting tests passed.'
 }
+catch {
+    New-Item -ItemType Directory -Path (Join-Path $projectRoot 'test-diagnostics') -Force | Out-Null
+    $_ | Format-List * -Force | Out-String | Set-Content -LiteralPath (Join-Path $projectRoot 'test-diagnostics/progress-error.log')
+    throw
+}
 finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
