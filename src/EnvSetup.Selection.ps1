@@ -28,23 +28,17 @@ function Get-InteractiveTaskMenuItems {
     return @(
         foreach ($task in $Tasks) {
             $configured = $false
-            try {
-                $configured = [bool](& $task.Detect $Context)
-            }
-            catch {
-                $configured = $false
-            }
+            try { $configured = [bool](& $task.Detect $Context) }
+            catch { $configured = $false }
 
             [pscustomobject]@{
-                Id       = $task.Id
-                Label    = "$($task.Category): $($task.Name)"
-                Selected = if ($useSavedSelection) {
-                    $savedTaskIds -contains $task.Id
-                }
-                else {
-                    [bool]$task.Default
-                }
-                Status   = if ($configured) { 'configured' } else { '' }
+                Id              = $task.Id
+                Label           = "$($task.Category): $($task.Name)"
+                Selected        = if ($useSavedSelection) { $savedTaskIds -contains $task.Id } else { [bool]$task.Default }
+                Default         = [bool]$task.Default
+                Profiles        = @($task.Profiles)
+                DependencyCount = @($task.Dependencies).Count
+                Status          = if ($configured) { 'configured' } else { 'missing' }
             }
         }
     )
@@ -58,7 +52,6 @@ function Set-SetupOptionsFromPlan {
     )
 
     if ($null -eq $Plan) { return }
-
     $requestedOptions = Get-OptionalPropertyValue -Object $Plan -Name 'options'
     if ($null -eq $requestedOptions) { return }
 
@@ -70,14 +63,10 @@ function Set-SetupOptionsFromPlan {
     }
     if ($ExplicitOptionNames -notcontains 'WslDistribution') {
         $requestedDistribution = Get-OptionalPropertyValue -Object $requestedOptions -Name 'WslDistribution'
-        if (-not [string]::IsNullOrWhiteSpace([string]$requestedDistribution)) {
-            $Context.Options.WslDistribution = [string]$requestedDistribution
-        }
+        if (-not [string]::IsNullOrWhiteSpace([string]$requestedDistribution)) { $Context.Options.WslDistribution = [string]$requestedDistribution }
     }
     if ($ExplicitOptionNames -notcontains 'WslWebDownload') {
         $requestedWebDownload = Get-OptionalPropertyValue -Object $requestedOptions -Name 'WslWebDownload'
-        if ($null -ne $requestedWebDownload) {
-            $Context.Options.WslWebDownload = [bool]$requestedWebDownload
-        }
+        if ($null -ne $requestedWebDownload) { $Context.Options.WslWebDownload = [bool]$requestedWebDownload }
     }
 }
