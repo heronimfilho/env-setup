@@ -28,6 +28,31 @@ function Compare-SemanticVersion {
     return ([version]$leftCore).CompareTo([version]$rightCore)
 }
 
+function Update-EnvSetupGitClone {
+    param(
+        [Parameter(Mandatory = $true)][string]$ProjectRoot,
+        [Parameter(Mandatory = $true)][string]$Commit
+    )
+
+    if (-not (Test-CommandAvailable -Name 'git.exe') -and -not (Test-CommandAvailable -Name 'git')) {
+        throw 'This env-setup installation is a Git clone, but Git is not available for a safe update.'
+    }
+    $gitCommand = if (Test-CommandAvailable -Name 'git.exe') { 'git.exe' } else { 'git' }
+    $status = Invoke-NativeCommand -FilePath $gitCommand -ArgumentList @('-C', $ProjectRoot, 'status', '--porcelain') -Quiet
+    if (-not [string]::IsNullOrWhiteSpace($status.Text)) {
+        throw 'The env-setup Git working tree has local changes. Commit or discard them before running -Update.'
+    }
+    $branch = (Invoke-NativeCommand -FilePath $gitCommand -ArgumentList @('-C', $ProjectRoot, 'branch', '--show-current') -Quiet).Text.Trim()
+    if ($branch -ne 'main') {
+        throw "Self-update for Git clones requires the main branch. Current branch: $branch"
+    }
+
+    Invoke-NativeCommand -FilePath $gitCommand -ArgumentList @('-C', $ProjectRoot, 'fetch', '--prune', 'origin', 'main') | Out-Null
+    Invoke-NativeCommand -FilePath $gitCommand -ArgumentList @('-C', $ProjectRoot, 'merge', '--ff-only', $Commit) | Out-Null
+    $head = (Invoke-NativeCommand -FilePath $gitCommand -ArgumentList @('-C', $ProjectRoot, 'rev-parse', 'HEAD') -Quiet).Text.Trim()
+    if ($head -ne $Commit) { throw "Git update verification failed. Expected $Commit but HEAD is $head." }
+}
+
 function Invoke-EnvSetupUpdate {
     param(
         [Parameter(Mandatory = $true)][string]$ProjectRoot,
@@ -43,13 +68,18 @@ function Invoke-EnvSetupUpdate {
         return [pscustomobject]@{ updated = $false; currentVersion = $currentVersion; latestVersion = $manifest.version }
     }
 
-    $bootstrapPath = Join-Path ([System.IO.Path]::GetTempPath()) ("env-setup-bootstrap-{0}.ps1" -f $manifest.commit)
-    $bootstrapUri = "https://raw.githubusercontent.com/heronimfilho/env-setup/$($manifest.commit)/bootstrap.ps1"
-    Write-SetupMessage -Message "Downloading the verified updater for version $($manifest.version)..." -Level Muted -Event 'update-download'
-    Invoke-WebRequest -Uri $bootstrapUri -OutFile $bootstrapPath -UseBasicParsing
+    if (Test-Path -LiteralPath (Join-Path $ProjectRoot '.git') -PathType Container) {
+        Write-SetupMessage -Message 'Updating the clean main branch with a verified fast-forward...' -Level Muted -Event 'update-git'
+        Update-EnvSetupGitClone -ProjectRoot $ProjectRoot -Commit $manifest.commit
+    }
+    else {
+        $bootstrapPath = Join-Path ([System.IO.Path]::GetTempPath()) ("env-setup-bootstrap-{0}.ps1" -f $manifest.commit)
+        $bootstrapUri = "https://raw.githubusercontent.com/heronimfilho/env-setup/$($manifest.commit)/bootstrap.ps1"
+        Write-SetupMessage -Message "Downloading the verified updater for version $($manifest.version)..." -Level Muted -Event 'update-download'
+        Invoke-WebRequest -Uri $bootstrapUri -OutFile $bootstrapPath -UseBasicParsing
+        & $bootstrapPath -Commit $manifest.commit -ArchiveSha256 $manifest.archiveSha256 -Destination $ProjectRoot -UpdateExisting -SkipRun
+    }
 
-    & $bootstrapPath -Commit $manifest.commit -ArchiveSha256 $manifest.archiveSha256 -Destination $ProjectRoot -UpdateExisting -SkipRun
-    if ($LASTEXITCODE -ne 0) { throw "The updater exited with code $LASTEXITCODE." }
     Write-SetupMessage -Message "env-setup was updated from $currentVersion to $($manifest.version). Run setup.ps1 again to use the new version." -Level Success -Event 'update-complete'
     return [pscustomobject]@{ updated = $true; previousVersion = $currentVersion; latestVersion = $manifest.version; commit = $manifest.commit }
 }
