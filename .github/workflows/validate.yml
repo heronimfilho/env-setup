@@ -14,35 +14,50 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Validate PowerShell syntax
         shell: pwsh
         run: |
           $files = Get-ChildItem -Path . -Filter *.ps1 -Recurse
-
           foreach ($file in $files) {
             $tokens = $null
             $errors = $null
-            [System.Management.Automation.Language.Parser]::ParseFile(
-              $file.FullName,
-              [ref]$tokens,
-              [ref]$errors
-            ) | Out-Null
-
+            [System.Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$tokens, [ref]$errors) | Out-Null
             if ($errors.Count -gt 0) {
               $errors | ForEach-Object { Write-Error $_ }
               exit 1
             }
           }
 
+      - name: Run PSScriptAnalyzer
+        shell: pwsh
+        run: |
+          Set-PSRepository PSGallery -InstallationPolicy Trusted
+          Install-Module PSScriptAnalyzer -RequiredVersion 1.25.0 -Scope CurrentUser -Force
+          $issues = Invoke-ScriptAnalyzer -Path . -Recurse -Severity Error
+          $issues | Format-Table -AutoSize
+          if ($issues.Count -gt 0) { exit 1 }
+
       - name: Run setup core tests
         shell: powershell
         run: .\tests\core.test.ps1
 
+      - name: Run runtime tests
+        shell: powershell
+        run: .\tests\runtime.test.ps1
+
       - name: Run task progress tests
         shell: powershell
         run: .\tests\progress.test.ps1
+
+      - name: Run diagnostics tests
+        shell: powershell
+        run: .\tests\diagnostics.test.ps1
+
+      - name: Run updater tests
+        shell: powershell
+        run: .\tests\update.test.ps1
 
       - name: Run setup integration tests
         shell: powershell
@@ -68,14 +83,17 @@ jobs:
         shell: powershell
         run: .\tests\entrypoints.test.ps1
 
-  shell:
+  shell-and-docs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Validate Bash syntax
         run: bash -n configure-zsh.sh install-node.sh tests/configure-zsh.test.sh tests/node.test.sh
+
+      - name: Run ShellCheck
+        run: shellcheck configure-zsh.sh install-node.sh tests/configure-zsh.test.sh tests/node.test.sh
 
       - name: Run Zsh setup tests
         run: bash tests/configure-zsh.test.sh
@@ -89,6 +107,15 @@ jobs:
             python -m json.tool "$file" > /dev/null
           done
 
+      - name: Lint Markdown
+        run: npx --yes markdownlint-cli2@0.18.1 "**/*.md" "#.git/**"
+
+      - name: Validate GitHub Actions
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+
+      - name: Scan repository for common secret formats
+        run: python tests/secret-scan.py
+
       - name: Calculate immutable archive checksum
         env:
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
@@ -100,7 +127,7 @@ jobs:
           cat /tmp/archive-checksum.json
 
       - name: Upload immutable archive checksum
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: immutable-archive-checksum
           path: /tmp/archive-checksum.json
