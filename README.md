@@ -130,10 +130,13 @@ Persistent runtime data is stored outside the repository:
 
 - [Getting started](docs/getting-started.md)
 - [Profiles and configuration](docs/profiles.md)
-- [Recovery and troubleshooting](docs/recovery.md)
+- [Task catalog](docs/task-catalog.md)
+- [Recovery](docs/recovery.md)
+- [Troubleshooting](docs/troubleshooting.md)
 - [Architecture](docs/architecture.md)
 - [Adding a task](docs/adding-a-task.md)
-- [Changelog](docs/changelog.md)
+- [Recommended repository settings](docs/repository-settings.md)
+- [Changelog](CHANGELOG.md)
 - [Contributing](CONTRIBUTING.md)
 - [Security policy](SECURITY.md)
 
