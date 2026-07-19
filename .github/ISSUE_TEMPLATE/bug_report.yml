@@ -1,0 +1,45 @@
+name: Bug report
+description: Report a reproducible env-setup failure
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not include tokens, passwords, passphrases, or private keys. Run `setup.ps1 -CollectDiagnostics` and review the ZIP before attaching it.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `setup.ps1 -Version`.
+    validations:
+      required: true
+  - type: input
+    id: error-code
+    attributes:
+      label: Error code
+      description: Stable ENVSETUP error code shown by the CLI, when available.
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Sanitized diagnostics
+      description: Attach or summarize the reviewed diagnostics bundle.
