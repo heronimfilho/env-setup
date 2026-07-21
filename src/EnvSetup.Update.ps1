@@ -10,27 +10,6 @@ function ConvertTo-SemanticVersionParts {
     }
 }
 
-function Assert-EnvSetupReleaseManifest {
-    param([Parameter(Mandatory = $true)]$Manifest)
-    foreach ($property in @('version', 'commit', 'archiveSha256')) {
-        if ($null -eq $Manifest.PSObject.Properties[$property] -or [string]::IsNullOrWhiteSpace([string]$Manifest.$property)) {
-            throw "Release manifest is missing: $property"
-        }
-    }
-    [void](ConvertTo-SemanticVersionParts -Version ([string]$Manifest.version))
-    if ([string]$Manifest.commit -notmatch '^[0-9a-fA-F]{40}$') { throw 'Release manifest contains an invalid commit SHA.' }
-    if ([string]$Manifest.archiveSha256 -notmatch '^[0-9a-fA-F]{64}$') { throw 'Release manifest contains an invalid archive SHA-256.' }
-}
-
-function Get-EnvSetupReleaseManifest {
-    param([string]$Uri = 'https://raw.githubusercontent.com/heronimfilho/env-setup/main/release-manifest.json')
-    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-    $response = Invoke-WebRequest -Uri $Uri -UseBasicParsing
-    $manifest = $response.Content | ConvertFrom-Json
-    Assert-EnvSetupReleaseManifest -Manifest $manifest
-    return $manifest
-}
-
 function Compare-SemanticVersion {
     param([Parameter(Mandatory = $true)][string]$Left, [Parameter(Mandatory = $true)][string]$Right)
     $leftParts = ConvertTo-SemanticVersionParts -Version $Left
@@ -68,10 +47,80 @@ function Compare-SemanticVersion {
     return 0
 }
 
+function Get-EnvSetupCurrentWindowsBuild {
+    try {
+        return [int](Get-ItemPropertyValue -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -Name CurrentBuildNumber -ErrorAction Stop)
+    }
+    catch {
+        return [Environment]::OSVersion.Version.Build
+    }
+}
+
+function Assert-EnvSetupReleaseMetadata {
+    param([Parameter(Mandatory = $true)]$Metadata)
+    foreach ($property in @('version', 'minimumWindowsBuild', 'archiveName', 'archiveSha256')) {
+        if ($null -eq $Metadata.PSObject.Properties[$property] -or [string]::IsNullOrWhiteSpace([string]$Metadata.$property)) {
+            throw "Release metadata is missing: $property"
+        }
+    }
+    [void](ConvertTo-SemanticVersionParts -Version ([string]$Metadata.version))
+    if ([int]$Metadata.minimumWindowsBuild -lt 19041) { throw 'Release metadata contains an invalid minimum Windows build.' }
+    if ([string]$Metadata.archiveName -notmatch '^env-setup-[0-9A-Za-z.-]+\.zip$') { throw 'Release metadata contains an invalid archive name.' }
+    if ([string]$Metadata.archiveSha256 -notmatch '^[0-9a-fA-F]{64}$') { throw 'Release metadata contains an invalid archive SHA-256.' }
+}
+
+function Get-EnvSetupReleaseAsset {
+    param([Parameter(Mandatory = $true)]$Release, [Parameter(Mandatory = $true)][string]$Name)
+    $asset = @($Release.assets | Where-Object { $_.name -eq $Name }) | Select-Object -First 1
+    if ($null -eq $asset) { throw "GitHub Release asset not found: $Name" }
+    return $asset
+}
+
+function Get-EnvSetupRelease {
+    param(
+        [string]$Repository = 'heronimfilho/env-setup',
+        [string]$Version
+    )
+
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    $headers = @{ 'User-Agent' = 'env-setup-updater'; 'Accept' = 'application/vnd.github+json' }
+    $uri = if ([string]::IsNullOrWhiteSpace($Version)) {
+        "https://api.github.com/repos/$Repository/releases/latest"
+    }
+    else {
+        "https://api.github.com/repos/$Repository/releases/tags/v$Version"
+    }
+
+    $release = Invoke-RestMethod -Uri $uri -Headers $headers -UseBasicParsing
+    $resolvedVersion = ([string]$release.tag_name).TrimStart('v')
+    [void](ConvertTo-SemanticVersionParts -Version $resolvedVersion)
+    if (-not [string]::IsNullOrWhiteSpace($Version) -and $resolvedVersion -ne $Version) {
+        throw "Resolved release version mismatch. Expected $Version but received $resolvedVersion."
+    }
+
+    $metadataAsset = Get-EnvSetupReleaseAsset -Release $release -Name 'env-setup-release.json'
+    $response = Invoke-WebRequest -Uri $metadataAsset.browser_download_url -Headers $headers -UseBasicParsing
+    $metadata = $response.Content | ConvertFrom-Json
+    Assert-EnvSetupReleaseMetadata -Metadata $metadata
+    if ([string]$metadata.version -ne $resolvedVersion) {
+        throw "Release metadata version mismatch. Expected $resolvedVersion but received $($metadata.version)."
+    }
+
+    $archiveAsset = Get-EnvSetupReleaseAsset -Release $release -Name ([string]$metadata.archiveName)
+    return [pscustomobject]@{
+        Version = $resolvedVersion
+        TagName = [string]$release.tag_name
+        Metadata = $metadata
+        ArchiveUrl = [string]$archiveAsset.browser_download_url
+        ReleaseUrl = [string]$release.html_url
+    }
+}
+
 function Update-EnvSetupGitClone {
     param(
         [Parameter(Mandatory = $true)][string]$ProjectRoot,
-        [Parameter(Mandatory = $true)][string]$ExpectedVersion
+        [Parameter(Mandatory = $true)][string]$ExpectedVersion,
+        [Parameter(Mandatory = $true)][string]$ExpectedTag
     )
 
     if (-not (Test-CommandAvailable -Name 'git.exe') -and -not (Test-CommandAvailable -Name 'git')) {
@@ -83,8 +132,8 @@ function Update-EnvSetupGitClone {
     $branch = (Invoke-NativeCommand -FilePath $gitCommand -ArgumentList @('-C', $ProjectRoot, 'branch', '--show-current') -Quiet).Text.Trim()
     if ($branch -ne 'main') { throw "Self-update for Git clones requires the main branch. Current branch: $branch" }
 
-    Invoke-NativeCommand -FilePath $gitCommand -ArgumentList @('-C', $ProjectRoot, 'fetch', '--prune', 'origin', 'main') | Out-Null
-    Invoke-NativeCommand -FilePath $gitCommand -ArgumentList @('-C', $ProjectRoot, 'merge', '--ff-only', 'origin/main') | Out-Null
+    Invoke-NativeCommand -FilePath $gitCommand -ArgumentList @('-C', $ProjectRoot, 'fetch', '--prune', '--tags', 'origin') | Out-Null
+    Invoke-NativeCommand -FilePath $gitCommand -ArgumentList @('-C', $ProjectRoot, 'merge', '--ff-only', "refs/tags/$ExpectedTag") | Out-Null
     $installedVersion = Get-EnvSetupVersion -ProjectRoot $ProjectRoot
     if ($installedVersion -ne $ExpectedVersion) { throw "Git update verification failed. Expected version $ExpectedVersion but installed version is $installedVersion." }
 }
@@ -93,29 +142,37 @@ function Invoke-EnvSetupUpdate {
     param(
         [Parameter(Mandatory = $true)][string]$ProjectRoot,
         [switch]$Force,
-        [string]$ManifestUri = 'https://raw.githubusercontent.com/heronimfilho/env-setup/main/release-manifest.json'
+        [string]$Repository = 'heronimfilho/env-setup'
     )
 
     $currentVersion = Get-EnvSetupVersion -ProjectRoot $ProjectRoot
-    Write-SetupMessage -Message "Checking for env-setup updates (current version: $currentVersion)..." -Level Info -Event 'update-check'
-    $manifest = Get-EnvSetupReleaseManifest -Uri $ManifestUri
-    if (-not $Force -and (Compare-SemanticVersion -Left $manifest.version -Right $currentVersion) -le 0) {
+    Write-SetupMessage -Message "Checking GitHub Releases for env-setup updates (current version: $currentVersion)..." -Level Info -Event 'update-check'
+    $release = Get-EnvSetupRelease -Repository $Repository
+    if (-not $Force -and (Compare-SemanticVersion -Left $release.Version -Right $currentVersion) -le 0) {
         Write-SetupMessage -Message "env-setup $currentVersion is already current." -Level Success -Event 'update-current'
-        return [pscustomobject]@{ updated = $false; currentVersion = $currentVersion; latestVersion = $manifest.version }
+        return [pscustomobject]@{ updated = $false; currentVersion = $currentVersion; latestVersion = $release.Version; releaseUrl = $release.ReleaseUrl }
+    }
+
+    $currentBuild = Get-EnvSetupCurrentWindowsBuild
+    if ($currentBuild -lt [int]$release.Metadata.minimumWindowsBuild) {
+        throw "env-setup $($release.Version) requires Windows build $($release.Metadata.minimumWindowsBuild) or newer. Current build: $currentBuild."
     }
 
     if (Test-Path -LiteralPath (Join-Path $ProjectRoot '.git') -PathType Container) {
-        Write-SetupMessage -Message 'Updating the clean main branch with a verified fast-forward...' -Level Muted -Event 'update-git'
-        Update-EnvSetupGitClone -ProjectRoot $ProjectRoot -ExpectedVersion $manifest.version
+        Write-SetupMessage -Message "Updating the clean main branch to release $($release.TagName)..." -Level Muted -Event 'update-git'
+        Update-EnvSetupGitClone -ProjectRoot $ProjectRoot -ExpectedVersion $release.Version -ExpectedTag $release.TagName
     }
     else {
-        $bootstrapPath = Join-Path ([System.IO.Path]::GetTempPath()) ("env-setup-bootstrap-{0}.ps1" -f $manifest.commit)
-        $bootstrapUri = "https://raw.githubusercontent.com/heronimfilho/env-setup/$($manifest.commit)/bootstrap.ps1"
-        Write-SetupMessage -Message "Downloading the verified updater for version $($manifest.version)..." -Level Muted -Event 'update-download'
-        Invoke-WebRequest -Uri $bootstrapUri -OutFile $bootstrapPath -UseBasicParsing
-        & $bootstrapPath -Commit $manifest.commit -ArchiveSha256 $manifest.archiveSha256 -Destination $ProjectRoot -UpdateExisting -SkipRun -Quiet
+        $bootstrapPath = Join-Path $ProjectRoot 'bootstrap.ps1'
+        if (-not (Test-Path -LiteralPath $bootstrapPath -PathType Leaf)) { throw 'bootstrap.ps1 was not found in the current installation.' }
+        Write-SetupMessage -Message "Installing published release $($release.Version)..." -Level Muted -Event 'update-release'
+        & $bootstrapPath -Version $release.Version -Repository $Repository -Destination $ProjectRoot -UpdateExisting -SkipRun -Quiet
+        $installedVersion = Get-EnvSetupVersion -ProjectRoot $ProjectRoot
+        if ($installedVersion -ne $release.Version) {
+            throw "Release update verification failed. Expected version $($release.Version) but installed version is $installedVersion."
+        }
     }
 
-    Write-SetupMessage -Message "env-setup was updated from $currentVersion to $($manifest.version). Run setup.ps1 again to use the new version." -Level Success -Event 'update-complete'
-    return [pscustomobject]@{ updated = $true; previousVersion = $currentVersion; latestVersion = $manifest.version; commit = $manifest.commit }
+    Write-SetupMessage -Message "env-setup was updated from $currentVersion to $($release.Version). Run setup.ps1 again to use the new version." -Level Success -Event 'update-complete'
+    return [pscustomobject]@{ updated = $true; previousVersion = $currentVersion; latestVersion = $release.Version; tag = $release.TagName; releaseUrl = $release.ReleaseUrl }
 }
