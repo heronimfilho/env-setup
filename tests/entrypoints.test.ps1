@@ -19,46 +19,48 @@ if ($taskFactories.Contains('EnvSetup.Progress.ps1')) {
 
 $installWsl = Get-Content -LiteralPath (Join-Path $projectRoot 'install-wsl.ps1') -Raw
 foreach ($required in @('setup.ps1', 'wsl.install')) {
-    if (-not $installWsl.Contains($required)) {
-        throw "install-wsl.ps1 is missing delegation content: $required"
-    }
+    if (-not $installWsl.Contains($required)) { throw "install-wsl.ps1 is missing delegation content: $required" }
 }
-if ($installWsl -match 'wsl\.exe\s+--install') {
-    throw 'install-wsl.ps1 still performs a direct WSL installation.'
-}
+if ($installWsl -match 'wsl\.exe\s+--install') { throw 'install-wsl.ps1 still performs a direct WSL installation.' }
 
 $configureZsh = Get-Content -LiteralPath (Join-Path $projectRoot 'configure-zsh.ps1') -Raw
 foreach ($required in @('setup.ps1', 'wsl.zsh')) {
-    if (-not $configureZsh.Contains($required)) {
-        throw "configure-zsh.ps1 is missing delegation content: $required"
-    }
+    if (-not $configureZsh.Contains($required)) { throw "configure-zsh.ps1 is missing delegation content: $required" }
 }
-if ($configureZsh -match 'wsl\.exe\s+--distribution') {
-    throw 'configure-zsh.ps1 still performs direct WSL configuration.'
-}
+if ($configureZsh -match 'wsl\.exe\s+--distribution') { throw 'configure-zsh.ps1 still performs direct WSL configuration.' }
 
 $bootstrap = Get-Content -LiteralPath (Join-Path $projectRoot 'bootstrap.ps1') -Raw
-foreach ($required in @('Commit', 'ArchiveSha256', 'Get-FileHash', 'codeload.github.com')) {
-    if (-not $bootstrap.Contains($required)) {
-        throw "bootstrap.ps1 is missing immutable download validation: $required"
-    }
+foreach ($required in @('releases/latest', 'releases/tags/v$Version', 'env-setup-release.json', 'archiveSha256', 'minimumWindowsBuild', 'Get-FileHash')) {
+    if (-not $bootstrap.Contains($required)) { throw "bootstrap.ps1 is missing GitHub Release validation: $required" }
 }
-foreach ($forbidden in @('refs/heads', "Branch = 'main'", 'Branch = "main"')) {
-    if ($bootstrap.Contains($forbidden)) {
-        throw "bootstrap.ps1 still supports a mutable branch download: $forbidden"
-    }
+foreach ($forbidden in @('codeload.github.com', 'refs/heads', '[string]$Commit', '[string]$ArchiveSha256')) {
+    if ($bootstrap.Contains($forbidden)) { throw "bootstrap.ps1 still supports snapshot downloads: $forbidden" }
 }
 
 $readme = Get-Content -LiteralPath (Join-Path $projectRoot 'README.md') -Raw
-foreach ($required in @('4d821a0080b467e01f4570f5f65a3c2a45fc54c2', '1a45b9402918d934f511d9ee840b0d5e58426649b5db0f668c7003ce666ffa65')) {
-    if (-not $readme.Contains($required)) {
-        throw "README.md is missing the pinned bootstrap value: $required"
-    }
+foreach ($required in @(
+    'releases/latest/download/env-setup-bootstrap.ps1',
+    "& `$bootstrap",
+    "-Version '0.4.0'",
+    'env-setup-release.json',
+    'SHA256SUMS'
+)) {
+    if (-not $readme.Contains($required)) { throw "README.md is missing release installation content: $required" }
 }
-foreach ($forbidden in @('raw.githubusercontent.com/heronimfilho/env-setup/main/bootstrap.ps1', 'irm ', '| iex')) {
-    if ($readme.Contains($forbidden)) {
-        throw "README.md contains an unsafe bootstrap pattern: $forbidden"
-    }
+foreach ($forbidden in @('raw.githubusercontent.com/heronimfilho/env-setup/', 'codeload.github.com', '$commit =', '$archiveSha256 =', 'irm ', '| iex')) {
+    if ($readme.Contains($forbidden)) { throw "README.md contains an obsolete or unsafe installation pattern: $forbidden" }
+}
+
+$releaseWorkflow = Get-Content -LiteralPath (Join-Path $projectRoot '.github/workflows/release.yml') -Raw
+foreach ($required in @('git archive', 'env-setup-bootstrap.ps1', 'env-setup-release.json', 'SHA256SUMS', 'gh release create')) {
+    if (-not $releaseWorkflow.Contains($required)) { throw "Release workflow is missing asset publication: $required" }
+}
+if ($releaseWorkflow.Contains('release-manifest.json') -or $releaseWorkflow.Contains('codeload.github.com')) {
+    throw 'Release workflow still depends on snapshot manifest or codeload archives.'
+}
+
+if (Test-Path -LiteralPath (Join-Path $projectRoot 'release-manifest.json')) {
+    throw 'The obsolete snapshot release manifest still exists.'
 }
 
 Write-Host 'Entrypoint tests passed.'
