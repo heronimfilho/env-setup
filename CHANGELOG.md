@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.4.0 - Unreleased
+## 0.4.0
 
 - added live progress, execution summaries, stable error codes, JSON output, and improved interactive selection;
 - added Doctor, Status, task listing, configuration export, diagnostics bundles, logs, and self-update;
