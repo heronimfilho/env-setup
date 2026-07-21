@@ -39,7 +39,7 @@ See [`docs/adding-a-task.md`](docs/adding-a-task.md) for the complete checklist.
 - Preserve unrelated user configuration.
 - Back up files before modifying managed sections.
 - Keep `-Check` and `-DryRun` read-only.
-- Pin remote downloads to immutable versions and validate hashes when possible.
+- Publish distributable downloads as versioned GitHub Release assets and validate hashes.
 - Provide a recovery path for interrupted operations.
 
 ## Pull requests
