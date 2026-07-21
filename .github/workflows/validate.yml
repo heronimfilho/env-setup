@@ -10,17 +10,18 @@ permissions:
   contents: read
 
 jobs:
-  powershell:
+  powershell-lint:
     runs-on: windows-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
 
       - name: Validate PowerShell syntax
         shell: pwsh
         run: |
           $files = Get-ChildItem -Path . -Filter *.ps1 -Recurse
-
           foreach ($file in $files) {
             $tokens = $null
             $errors = $null
@@ -36,73 +37,210 @@ jobs:
             }
           }
 
+      - name: Run PSScriptAnalyzer
+        shell: pwsh
+        run: |
+          Set-PSRepository PSGallery -InstallationPolicy Trusted
+          Install-Module PSScriptAnalyzer -RequiredVersion 1.25.0 -Scope CurrentUser -Force
+          $issues = Invoke-ScriptAnalyzer -Path . -Recurse -Severity Error
+          $issues | Format-Table -AutoSize
+          if ($issues.Count -gt 0) { exit 1 }
+
+  powershell-tests:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shell:
+          - powershell
+          - pwsh
+
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
       - name: Run setup core tests
-        shell: powershell
+        shell: ${{ matrix.shell }}
         run: .\tests\core.test.ps1
 
+      - name: Run runtime tests
+        shell: ${{ matrix.shell }}
+        run: |
+          New-Item -ItemType Directory -Path test-diagnostics -Force | Out-Null
+          try {
+            & .\tests\runtime.test.ps1 *>&1 |
+              Tee-Object -FilePath test-diagnostics\runtime.log
+          }
+          catch {
+            $_ | Format-List * -Force | Out-String |
+              Tee-Object -FilePath test-diagnostics\runtime-error.log
+            exit 1
+          }
+
       - name: Run task progress tests
-        shell: powershell
+        shell: ${{ matrix.shell }}
         run: .\tests\progress.test.ps1
 
+      - name: Run diagnostics tests
+        shell: ${{ matrix.shell }}
+        run: .\tests\diagnostics.test.ps1
+
+      - name: Run updater tests
+        shell: ${{ matrix.shell }}
+        run: .\tests\update.test.ps1
+
       - name: Run setup integration tests
-        shell: powershell
+        shell: ${{ matrix.shell }}
         run: .\tests\setup.test.ps1
 
       - name: Run Git configuration tests
-        shell: powershell
+        shell: ${{ matrix.shell }}
         run: .\tests\git.test.ps1
 
       - name: Run Visual Studio Code tests
-        shell: powershell
+        shell: ${{ matrix.shell }}
         run: .\tests\vscode.test.ps1
 
       - name: Run WSL task tests
-        shell: powershell
+        shell: ${{ matrix.shell }}
         run: .\tests\wsl.test.ps1
 
       - name: Run shell configuration tests
-        shell: powershell
+        shell: ${{ matrix.shell }}
         run: .\tests\shell.test.ps1
 
       - name: Run entrypoint tests
-        shell: powershell
+        shell: ${{ matrix.shell }}
         run: .\tests\entrypoints.test.ps1
 
-  shell:
+      - name: Upload PowerShell failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: powershell-${{ matrix.shell }}-failure-diagnostics
+          path: test-diagnostics
+          if-no-files-found: ignore
+          retention-days: 7
+
+  shell-and-docs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
 
       - name: Validate Bash syntax
         run: bash -n configure-zsh.sh install-node.sh tests/configure-zsh.test.sh tests/node.test.sh
 
+      - name: Run ShellCheck
+        run: shellcheck configure-zsh.sh install-node.sh tests/configure-zsh.test.sh tests/node.test.sh
+
       - name: Run Zsh setup tests
-        run: bash tests/configure-zsh.test.sh
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p test-diagnostics
+          bash tests/configure-zsh.test.sh 2>&1 |
+            tee test-diagnostics/configure-zsh.log
 
       - name: Run NVM and Node setup tests
-        run: bash tests/node.test.sh
-
-      - name: Validate JSON
+        shell: bash
         run: |
-          find . -name '*.json' -print0 | while IFS= read -r -d '' file; do
-            python -m json.tool "$file" > /dev/null
-          done
+          set -o pipefail
+          mkdir -p test-diagnostics
+          bash tests/node.test.sh 2>&1 |
+            tee test-diagnostics/node.log
 
-      - name: Calculate immutable archive checksum
-        env:
-          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      - name: Validate JSON syntax
         run: |
-          head_sha="${PR_HEAD_SHA:-$GITHUB_SHA}"
-          curl -fsSL "https://codeload.github.com/${GITHUB_REPOSITORY}/zip/${head_sha}" -o /tmp/env-setup.zip
-          checksum="$(sha256sum /tmp/env-setup.zip | awk '{print $1}')"
-          printf '{"commit":"%s","sha256":"%s"}\n' "$head_sha" "$checksum" > /tmp/archive-checksum.json
-          cat /tmp/archive-checksum.json
+          find . -name '*.json' -print0 |
+            while IFS= read -r -d '' file; do
+              python -m json.tool "$file" > /dev/null
+            done
 
-      - name: Upload immutable archive checksum
-        uses: actions/upload-artifact@v4
+      - name: Validate JSON schemas
+        run: |
+          python -m pip install --disable-pip-version-check jsonschema==4.23.0
+          python tests/validate-json-schemas.py
+
+      - name: Lint Markdown
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p test-diagnostics
+          npx --yes markdownlint-cli2@0.18.1 "**/*.md" "#.git/**" 2>&1 |
+            tee test-diagnostics/markdownlint.log
+
+      - name: Validate GitHub Actions
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p test-diagnostics
+          go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 2>&1 |
+            tee test-diagnostics/actionlint.log
+
+      - name: Scan repository for common secret formats
+        run: python tests/secret-scan.py
+
+      - name: Build release candidate assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(tr -d '\r\n' < VERSION)"
+          archive="env-setup-${version}.zip"
+
+          git archive \
+            --format=zip \
+            --prefix="env-setup-${version}/" \
+            --output="$archive" \
+            HEAD
+
+          archive_sha256="$(sha256sum "$archive" | awk '{print $1}')"
+          cp bootstrap.ps1 env-setup-bootstrap.ps1
+          bootstrap_sha256="$(sha256sum env-setup-bootstrap.ps1 | awk '{print $1}')"
+
+          python - "$version" "$archive" "$archive_sha256" <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          version, archive, checksum = sys.argv[1:]
+          metadata = {
+              "version": version,
+              "minimumWindowsBuild": 19041,
+              "archiveName": archive,
+              "archiveSha256": checksum,
+          }
+          pathlib.Path("env-setup-release.json").write_text(
+              json.dumps(metadata, indent=2) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+          printf '%s  %s\n' "$archive_sha256" "$archive" > SHA256SUMS
+          printf '%s  %s\n' "$bootstrap_sha256" env-setup-bootstrap.ps1 >> SHA256SUMS
+          python -m json.tool env-setup-release.json > /dev/null
+          sha256sum --check SHA256SUMS
+
+      - name: Upload release candidate assets
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: immutable-archive-checksum
-          path: /tmp/archive-checksum.json
+          name: release-candidate-assets
+          path: |
+            env-setup-*.zip
+            env-setup-bootstrap.ps1
+            env-setup-release.json
+            SHA256SUMS
           if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload shell failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: shell-failure-diagnostics
+          path: test-diagnostics
+          if-no-files-found: ignore
           retention-days: 7

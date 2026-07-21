@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/heronimfilho/env-setup/schemas/setup-plan.schema.json",
+  "title": "env-setup plan",
+  "type": "object",
+  "required": [
+    "selectedTasks"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1,
+      "default": 1
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "profile": {
+      "type": "string",
+      "enum": [
+        "Interactive",
+        "Core",
+        "Backend",
+        "Full"
+      ]
+    },
+    "selectedTasks": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)*$"
+      },
+      "uniqueItems": true
+    },
+    "options": {
+      "type": "object",
+      "properties": {
+        "GitName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "GitEmail": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "email"
+        },
+        "WslDistribution": {
+          "type": "string"
+        },
+        "WslWebDownload": {
+          "type": "boolean"
+        },
+        "NonInteractive": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

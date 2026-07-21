@@ -24,7 +24,6 @@ if [[ "${ENV_SETUP_NONINTERACTIVE:-0}" == "1" ]]; then
 fi
 
 "${sudo_command[@]}" -v
-
 "${sudo_command[@]}" apt-get update
 "${sudo_command[@]}" env DEBIAN_FRONTEND=noninteractive apt-get install -y \
   ca-certificates \
@@ -101,13 +100,13 @@ configure_plugins() {
   declare -A seen_plugins=()
 
   existing_plugins="$(get_existing_plugins)"
-  for plugin in ${existing_plugins}; do
+  while IFS= read -r plugin; do
     plugin="${plugin//\"/}"
     plugin="${plugin//\'/}"
     [[ -z "${plugin}" || -n "${seen_plugins[${plugin}]:-}" ]] && continue
     merged_plugins+=("${plugin}")
     seen_plugins["${plugin}"]=1
-  done
+  done < <(printf '%s\n' "${existing_plugins}" | tr '[:space:]' '\n')
 
   for plugin in "${required_plugins[@]}"; do
     [[ -n "${seen_plugins[${plugin}]:-}" ]] && continue

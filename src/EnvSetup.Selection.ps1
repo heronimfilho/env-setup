@@ -2,17 +2,9 @@ Set-StrictMode -Version Latest
 
 function Get-ValidatedSavedSetupPlan {
     param($Plan)
-
     if ($null -eq $Plan) { return $null }
-
-    try {
-        Assert-SetupPlanSchema -Plan $Plan
-        return $Plan
-    }
-    catch {
-        Write-SetupMessage -Message "The saved setup plan is invalid and will be ignored: $($_.Exception.Message)" -Level Warning
-        return $null
-    }
+    try { Assert-SetupPlanSchema -Plan $Plan; return $Plan }
+    catch { Write-SetupMessage -Message "The saved setup plan is invalid and will be ignored: $($_.Exception.Message)" -Level Warning; return $null }
 }
 
 function Get-InteractiveTaskMenuItems {
@@ -24,27 +16,22 @@ function Get-InteractiveTaskMenuItems {
 
     $useSavedSelection = $null -ne $SavedPlan
     $savedTaskIds = if ($useSavedSelection) { @($SavedPlan.selectedTasks) } else { @() }
-
     return @(
         foreach ($task in $Tasks) {
             $configured = $false
-            try {
-                $configured = [bool](& $task.Detect $Context)
-            }
-            catch {
-                $configured = $false
-            }
+            try { $configured = [bool](& $task.Detect $Context) } catch { $configured = $false }
+            $default = [bool](Get-OptionalPropertyValue -Object $task -Name 'Default' -DefaultValue $false)
+            $profiles = @(Get-OptionalPropertyValue -Object $task -Name 'Profiles' -DefaultValue @())
+            $dependencies = @(Get-OptionalPropertyValue -Object $task -Name 'Dependencies' -DefaultValue @())
 
             [pscustomobject]@{
-                Id       = $task.Id
-                Label    = "$($task.Category): $($task.Name)"
-                Selected = if ($useSavedSelection) {
-                    $savedTaskIds -contains $task.Id
-                }
-                else {
-                    [bool]$task.Default
-                }
-                Status   = if ($configured) { 'configured' } else { '' }
+                Id = $task.Id
+                Label = "$($task.Category): $($task.Name)"
+                Selected = if ($useSavedSelection) { $savedTaskIds -contains $task.Id } else { $default }
+                Default = $default
+                Profiles = $profiles
+                DependencyCount = $dependencies.Count
+                Status = if ($configured) { 'configured' } else { 'missing' }
             }
         }
     )
@@ -56,28 +43,18 @@ function Set-SetupOptionsFromPlan {
         $Plan,
         [string[]]$ExplicitOptionNames = @()
     )
-
     if ($null -eq $Plan) { return }
-
     $requestedOptions = Get-OptionalPropertyValue -Object $Plan -Name 'options'
     if ($null -eq $requestedOptions) { return }
 
-    if ($ExplicitOptionNames -notcontains 'GitName') {
-        $Context.Options.GitName = Get-OptionalPropertyValue -Object $requestedOptions -Name 'GitName' -DefaultValue $Context.Options.GitName
-    }
-    if ($ExplicitOptionNames -notcontains 'GitEmail') {
-        $Context.Options.GitEmail = Get-OptionalPropertyValue -Object $requestedOptions -Name 'GitEmail' -DefaultValue $Context.Options.GitEmail
-    }
+    if ($ExplicitOptionNames -notcontains 'GitName') { $Context.Options.GitName = Get-OptionalPropertyValue -Object $requestedOptions -Name 'GitName' -DefaultValue $Context.Options.GitName }
+    if ($ExplicitOptionNames -notcontains 'GitEmail') { $Context.Options.GitEmail = Get-OptionalPropertyValue -Object $requestedOptions -Name 'GitEmail' -DefaultValue $Context.Options.GitEmail }
     if ($ExplicitOptionNames -notcontains 'WslDistribution') {
         $requestedDistribution = Get-OptionalPropertyValue -Object $requestedOptions -Name 'WslDistribution'
-        if (-not [string]::IsNullOrWhiteSpace([string]$requestedDistribution)) {
-            $Context.Options.WslDistribution = [string]$requestedDistribution
-        }
+        if (-not [string]::IsNullOrWhiteSpace([string]$requestedDistribution)) { $Context.Options.WslDistribution = [string]$requestedDistribution }
     }
     if ($ExplicitOptionNames -notcontains 'WslWebDownload') {
         $requestedWebDownload = Get-OptionalPropertyValue -Object $requestedOptions -Name 'WslWebDownload'
-        if ($null -ne $requestedWebDownload) {
-            $Context.Options.WslWebDownload = [bool]$requestedWebDownload
-        }
+        if ($null -ne $requestedWebDownload) { $Context.Options.WslWebDownload = [bool]$requestedWebDownload }
     }
 }

@@ -2,8 +2,9 @@
 
 set -Eeuo pipefail
 
-readonly PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-readonly TEMP_ROOT="$(mktemp -d)"
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+TEMP_ROOT="$(mktemp -d)"
+readonly PROJECT_ROOT TEMP_ROOT
 
 cleanup() {
   rm -rf "${TEMP_ROOT}"
