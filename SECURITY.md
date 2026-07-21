@@ -22,7 +22,8 @@ You should receive an acknowledgement within seven days. A remediation timeline 
 
 `env-setup` makes system-level changes and should be reviewed before execution. The project:
 
-- validates immutable bootstrap archives with SHA-256;
+- distributes installation and update archives as GitHub Release assets;
+- validates release metadata, minimum Windows build, archive SHA-256, and installed version;
 - never stores authentication tokens, passwords, passphrases, or private keys;
 - preserves user configuration outside managed sections;
 - keeps inspection modes read-only;
