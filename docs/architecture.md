@@ -11,7 +11,7 @@
 - `EnvSetup.Selection.ps1`: saved-plan validation and menu metadata.
 - `EnvSetup.Progress.ps1`: task phases, results, summaries, error codes, and recovery guidance.
 - `EnvSetup.Diagnostics.ps1`: doctor checks, status, exports, log access, and sanitized bundles.
-- `EnvSetup.Update.ps1`: release-manifest validation and immutable updates.
+- `EnvSetup.Update.ps1`: GitHub Release discovery, metadata validation, compatibility checks, and updates.
 - feature modules: Windows packages/settings, Git, VS Code, WSL, and shell configuration.
 
 The progress runner is loaded last intentionally. Feature modules define tasks, while the runner owns their lifecycle.
@@ -33,6 +33,13 @@ Persistent data is stored under `%LOCALAPPDATA%\env-setup` and remains outside t
 
 Inspection modes do not create storage, lock, plan, state, or log files. Configuration changes should be atomic, idempotent, and limited to managed sections.
 
-## Update model
+## Release and update model
 
-`release-manifest.json` publishes a semantic version, immutable commit, and archive SHA-256. The updater downloads the bootstrap from that commit, verifies the archive, backs up the current code, applies the snapshot, and restores the backup on failure.
+A version tag triggers the release workflow. The workflow packages the tagged repository, calculates SHA-256, and publishes these GitHub Release assets:
+
+- a versioned ZIP;
+- `env-setup-bootstrap.ps1`;
+- `env-setup-release.json`, containing the version, minimum Windows build, archive name, and checksum;
+- `SHA256SUMS`.
+
+The bootstrap and updater resolve a published release through the GitHub API, validate its metadata and Windows compatibility, verify the ZIP checksum, and confirm the installed `VERSION`. Non-Git installations are backed up before replacement and retain custom profiles. Clean Git clones on `main` fast-forward to the published release tag.
