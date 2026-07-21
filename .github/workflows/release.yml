@@ -17,56 +17,71 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Validate tag and release manifest
-        id: manifest
+      - name: Validate release tag
+        id: version
         shell: bash
         run: |
           set -euo pipefail
           version="$(tr -d '\r\n' < VERSION)"
-          tag="${GITHUB_REF_NAME#v}"
-          if [[ "$tag" != "$version" ]]; then
-            echo "Tag v$tag does not match VERSION $version" >&2
+          tag_version="${GITHUB_REF_NAME#v}"
+          if [[ "$tag_version" != "$version" ]]; then
+            echo "Tag $GITHUB_REF_NAME does not match VERSION $version" >&2
             exit 1
           fi
-          python -m json.tool release-manifest.json > /dev/null
-          manifest_version="$(python -c 'import json; print(json.load(open("release-manifest.json"))["version"])')"
-          commit="$(python -c 'import json; print(json.load(open("release-manifest.json"))["commit"])')"
-          checksum="$(python -c 'import json; print(json.load(open("release-manifest.json"))["archiveSha256"])')"
-          if [[ "$manifest_version" != "$version" ]]; then
-            echo "release-manifest.json version does not match VERSION" >&2
-            exit 1
-          fi
-          printf 'version=%s\ncommit=%s\nchecksum=%s\n' \
-            "$version" \
-            "$commit" \
-            "$checksum" \
-            >> "$GITHUB_OUTPUT"
+          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
 
-      - name: Build verified release assets
+      - name: Build release assets
+        id: assets
         shell: bash
         run: |
           set -euo pipefail
-          commit="${{ steps.manifest.outputs.commit }}"
-          expected="${{ steps.manifest.outputs.checksum }}"
-          archive="env-setup-${{ steps.manifest.outputs.version }}.zip"
-          curl -fsSL \
-            "https://codeload.github.com/${GITHUB_REPOSITORY}/zip/${commit}" \
-            -o "$archive"
-          actual="$(sha256sum "$archive" | awk '{print $1}')"
-          if [[ "$actual" != "$expected" ]]; then
-            echo "Release archive checksum mismatch" >&2
-            exit 1
-          fi
-          printf '%s  %s\n' "$actual" "$archive" > SHA256SUMS
+          version="${{ steps.version.outputs.version }}"
+          archive="env-setup-${version}.zip"
+          bootstrap_asset="env-setup-bootstrap.ps1"
 
-      - name: Create GitHub release
+          git archive \
+            --format=zip \
+            --prefix="env-setup-${version}/" \
+            --output="$archive" \
+            HEAD
+
+          archive_sha256="$(sha256sum "$archive" | awk '{print $1}')"
+          cp bootstrap.ps1 "$bootstrap_asset"
+          bootstrap_sha256="$(sha256sum "$bootstrap_asset" | awk '{print $1}')"
+
+          python - "$version" "$archive" "$archive_sha256" <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          version, archive, checksum = sys.argv[1:]
+          metadata = {
+              "version": version,
+              "minimumWindowsBuild": 19041,
+              "archiveName": archive,
+              "archiveSha256": checksum,
+          }
+          pathlib.Path("env-setup-release.json").write_text(
+              json.dumps(metadata, indent=2) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+          printf '%s  %s\n' "$archive_sha256" "$archive" > SHA256SUMS
+          printf '%s  %s\n' "$bootstrap_sha256" "$bootstrap_asset" >> SHA256SUMS
+          python -m json.tool env-setup-release.json > /dev/null
+
+      - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           gh release create "$GITHUB_REF_NAME" \
-            "env-setup-${{ steps.manifest.outputs.version }}.zip" \
+            "env-setup-${{ steps.version.outputs.version }}.zip" \
+            env-setup-bootstrap.ps1 \
+            env-setup-release.json \
             SHA256SUMS \
-            --title "env-setup ${{ steps.manifest.outputs.version }}" \
+            --title "env-setup ${{ steps.version.outputs.version }}" \
             --notes-file CHANGELOG.md \
-            --verify-tag
+            --verify-tag \
+            --latest
