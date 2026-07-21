@@ -44,9 +44,19 @@ function Assert-ReleaseMetadata {
         }
     }
     if ([string]$Metadata.version -ne $ExpectedVersion) { throw "Release metadata version mismatch. Expected $ExpectedVersion but received $($Metadata.version)." }
+    $expectedArchiveName = "env-setup-$ExpectedVersion.zip"
+    if ([string]$Metadata.archiveName -ne $expectedArchiveName) { throw "Release metadata archive mismatch. Expected $expectedArchiveName but received $($Metadata.archiveName)." }
     if ([string]$Metadata.archiveSha256 -notmatch '^[0-9a-fA-F]{64}$') { throw 'Release metadata contains an invalid archive SHA-256.' }
     if ([int]$Metadata.minimumWindowsBuild -lt 19041) { throw 'Release metadata contains an invalid minimum Windows build.' }
-    if ([string]$Metadata.archiveName -notmatch '^env-setup-[0-9A-Za-z.-]+\.zip$') { throw 'Release metadata contains an invalid archive name.' }
+}
+
+function Assert-InstalledVersion {
+    param([Parameter(Mandatory = $true)][string]$InstallPath, [Parameter(Mandatory = $true)][string]$ExpectedVersion)
+    $versionPath = Join-Path $InstallPath 'VERSION'
+    $installedVersion = if (Test-Path -LiteralPath $versionPath -PathType Leaf) { (Get-Content -LiteralPath $versionPath -Raw).Trim() } else { '' }
+    if ($installedVersion -ne $ExpectedVersion) {
+        throw "Installed version verification failed. Expected $ExpectedVersion but found '$installedVersion'."
+    }
 }
 
 if ((Test-Path -LiteralPath $Destination) -and -not $UpdateExisting) {
@@ -111,7 +121,14 @@ try {
 
     New-Item -ItemType Directory -Path (Split-Path -Parent $Destination) -Force | Out-Null
     if (-not (Test-Path -LiteralPath $Destination)) {
-        Move-Item -LiteralPath $source.FullName -Destination $Destination
+        try {
+            Move-Item -LiteralPath $source.FullName -Destination $Destination
+            Assert-InstalledVersion -InstallPath $Destination -ExpectedVersion $releaseVersion
+        }
+        catch {
+            Remove-Item -LiteralPath $Destination -Recurse -Force -ErrorAction SilentlyContinue
+            throw
+        }
         Write-BootstrapMessage -Message "env-setup $releaseVersion was extracted to: $Destination" -Color Green
     }
     else {
@@ -146,8 +163,10 @@ try {
                     Copy-Item -LiteralPath $_.FullName -Destination $profileDestination -Force
                 }
             }
+            Assert-InstalledVersion -InstallPath $Destination -ExpectedVersion $releaseVersion
         }
         catch {
+            New-Item -ItemType Directory -Path $Destination -Force | Out-Null
             Get-ChildItem -LiteralPath $Destination -Force | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
             Get-ChildItem -LiteralPath $backupPath -Force | ForEach-Object {
                 Copy-Item -LiteralPath $_.FullName -Destination $Destination -Recurse -Force
@@ -155,12 +174,6 @@ try {
             throw
         }
         Write-BootstrapMessage -Message 'Existing installation updated successfully.' -Color Green
-    }
-
-    $installedVersionPath = Join-Path $Destination 'VERSION'
-    $installedVersion = if (Test-Path -LiteralPath $installedVersionPath -PathType Leaf) { (Get-Content -LiteralPath $installedVersionPath -Raw).Trim() } else { '' }
-    if ($installedVersion -ne $releaseVersion) {
-        throw "Installed version verification failed. Expected $releaseVersion but found '$installedVersion'."
     }
 }
 finally {
