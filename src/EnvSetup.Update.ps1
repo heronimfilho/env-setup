@@ -65,7 +65,8 @@ function Assert-EnvSetupReleaseMetadata {
     }
     [void](ConvertTo-SemanticVersionParts -Version ([string]$Metadata.version))
     if ([int]$Metadata.minimumWindowsBuild -lt 19041) { throw 'Release metadata contains an invalid minimum Windows build.' }
-    if ([string]$Metadata.archiveName -notmatch '^env-setup-[0-9A-Za-z.-]+\.zip$') { throw 'Release metadata contains an invalid archive name.' }
+    $expectedArchiveName = "env-setup-$($Metadata.version).zip"
+    if ([string]$Metadata.archiveName -ne $expectedArchiveName) { throw "Release metadata archive mismatch. Expected $expectedArchiveName but received $($Metadata.archiveName)." }
     if ([string]$Metadata.archiveSha256 -notmatch '^[0-9a-fA-F]{64}$') { throw 'Release metadata contains an invalid archive SHA-256.' }
 }
 
