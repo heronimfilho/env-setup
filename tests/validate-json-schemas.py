@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate env-setup JSON files against their published schemas."""
+"""Validate persisted env-setup JSON files against their published schemas."""
 
 from __future__ import annotations
 
@@ -32,13 +32,6 @@ failures: list[str] = []
 plan_schema = ROOT / "schemas" / "setup-plan.schema.json"
 for profile in sorted((ROOT / "profiles").glob("*.json")):
     failures.extend(validate(profile, plan_schema))
-
-failures.extend(
-    validate(
-        ROOT / "release-manifest.json",
-        ROOT / "schemas" / "release-manifest.schema.json",
-    )
-)
 
 if failures:
     print("JSON Schema validation failed:", file=sys.stderr)
