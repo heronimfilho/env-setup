@@ -36,6 +36,7 @@ foreach ($invalidMetadata in @(
     [pscustomobject]@{ version = 'bad'; minimumWindowsBuild = 19041; archiveName = 'env-setup-bad.zip'; archiveSha256 = ('0' * 64) },
     [pscustomobject]@{ version = '1.2.3'; minimumWindowsBuild = 10000; archiveName = 'env-setup-1.2.3.zip'; archiveSha256 = ('0' * 64) },
     [pscustomobject]@{ version = '1.2.3'; minimumWindowsBuild = 19041; archiveName = 'unexpected.zip'; archiveSha256 = ('0' * 64) },
+    [pscustomobject]@{ version = '1.2.3'; minimumWindowsBuild = 19041; archiveName = 'env-setup-9.9.9.zip'; archiveSha256 = ('0' * 64) },
     [pscustomobject]@{ version = '1.2.3'; minimumWindowsBuild = 19041; archiveName = 'env-setup-1.2.3.zip'; archiveSha256 = 'bad' }
 )) {
     $invalidRejected = $false
@@ -92,11 +93,14 @@ foreach ($required in @(
     'archiveSha256',
     'minimumWindowsBuild',
     'Get-FileHash',
+    'Assert-InstalledVersion',
+    'Release metadata archive mismatch',
     "Join-Path `$Destination '.git'",
     'custom-profiles',
     "Name -ne 'custom.example.json'",
     '[switch]$Quiet',
-    'Installed version verification failed'
+    'Installed version verification failed',
+    'Get-ChildItem -LiteralPath $backupPath -Force'
 )) {
     if (-not $bootstrap.Contains($required)) { throw "bootstrap.ps1 is missing release update protection: $required" }
 }
@@ -105,7 +109,13 @@ foreach ($forbidden in @('codeload.github.com', 'ArchiveSha256', '[string]$Commi
 }
 
 $updater = Get-Content -LiteralPath (Join-Path $projectRoot 'src/EnvSetup.Update.ps1') -Raw
-foreach ($required in @('Get-EnvSetupCurrentWindowsBuild', 'minimumWindowsBuild', 'Release update verification failed', 'refs/tags/$ExpectedTag')) {
+foreach ($required in @(
+    'Get-EnvSetupCurrentWindowsBuild',
+    'minimumWindowsBuild',
+    'Release metadata archive mismatch',
+    'Release update verification failed',
+    'refs/tags/$ExpectedTag'
+)) {
     if (-not $updater.Contains($required)) { throw "Updater is missing release validation: $required" }
 }
 
