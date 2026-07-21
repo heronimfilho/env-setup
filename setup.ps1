@@ -6,7 +6,7 @@ Installs and configures a repeatable Windows development environment.
 
 .DESCRIPTION
 Provides an interactive task selector, reusable profiles, resumable execution, diagnostics,
-status reporting, immutable self-updates, sanitized support bundles, and machine-readable output.
+status reporting, GitHub Release updates, sanitized support bundles, and machine-readable output.
 
 .EXAMPLE
 .\setup.ps1
@@ -26,7 +26,7 @@ Returns the persisted state of every task as JSON lines.
 
 .EXAMPLE
 .\setup.ps1 -Update
-Downloads the latest immutable release snapshot and validates its SHA-256 before updating.
+Installs the latest stable GitHub Release after validating compatibility and SHA-256.
 #>
 
 [CmdletBinding()]
@@ -138,14 +138,25 @@ try {
     }
     if ($ListTasks) {
         $catalog = @($tasks | ForEach-Object {
-            [pscustomobject]@{ id = $_.Id; name = $_.Name; category = $_.Category; default = [bool]$_.Default; profiles = @($_.Profiles); dependencies = @($_.Dependencies); requiresAdmin = [bool]$_.RequiresAdmin }
+            [pscustomobject]@{
+                id = $_.Id
+                name = $_.Name
+                category = $_.Category
+                default = [bool]$_.Default
+                profiles = @($_.Profiles)
+                dependencies = @($_.Dependencies)
+                requiresAdmin = [bool]$_.RequiresAdmin
+            }
         })
         Write-SetupObject -Value $catalog -Event 'task-catalog'
         return
     }
     if ($Doctor) {
         $doctorResult = Invoke-EnvSetupDoctor -SkipNetwork:$DoctorSkipNetwork
-        $global:LASTEXITCODE = if ($doctorResult.healthy) { 0 } else { 1 }
+        $doctorExitCode = if ($doctorResult.healthy) { 0 } else { 1 }
+        $global:LASTEXITCODE = $doctorExitCode
+        [Environment]::ExitCode = $doctorExitCode
+        if ($doctorExitCode -ne 0) { exit $doctorExitCode }
         return
     }
     if ($Status) {
