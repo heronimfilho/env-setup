@@ -9,9 +9,25 @@
 - internet access to GitHub, Microsoft downloads, and the WinGet CDN;
 - firmware virtualization for WSL 2 and Windows Sandbox.
 
-Run the preflight before installation:
+## Install the latest release
+
+Open Windows PowerShell as Administrator:
 
 ```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+$bootstrap = Join-Path $env:TEMP 'env-setup-bootstrap.ps1'
+Invoke-WebRequest `
+  -Uri 'https://github.com/heronimfilho/env-setup/releases/latest/download/env-setup-bootstrap.ps1' `
+  -OutFile $bootstrap
+& $bootstrap
+```
+
+The bootstrap downloads the latest stable GitHub Release and verifies the published archive checksum before extracting it.
+
+Run the preflight after installation:
+
+```powershell
+cd $HOME\env-setup
 .\setup.ps1 -Doctor
 ```
 
