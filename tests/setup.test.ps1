@@ -68,6 +68,17 @@ public static class WingetStub {
     }
     if (-not $excludeFailed) { throw 'setup.ps1 accepted an excluded transitive dependency.' }
 
+    $currentHostPath = (Get-Process -Id $PID).Path
+    $env:PATH = Split-Path -Parent $currentHostPath
+    $env:LOCALAPPDATA = Join-Path $tempRoot 'doctor'
+    $doctorOutput = Join-Path $tempRoot 'doctor-output.log'
+    & $currentHostPath -NoProfile -File $setupPath -Doctor -DoctorSkipNetwork -NoColor *> $doctorOutput
+    $doctorExitCode = $LASTEXITCODE
+    if ($doctorExitCode -ne 1) {
+        $details = if (Test-Path -LiteralPath $doctorOutput) { Get-Content -LiteralPath $doctorOutput -Raw } else { '' }
+        throw "Doctor failures did not produce process exit code 1. Received $doctorExitCode.`n$details"
+    }
+
     Write-Host 'Setup integration tests passed.'
 }
 finally {
