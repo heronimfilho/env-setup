@@ -184,26 +184,55 @@ jobs:
       - name: Scan repository for common secret formats
         run: python tests/secret-scan.py
 
-      - name: Calculate immutable archive checksum
-        env:
-          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      - name: Build release candidate assets
+        shell: bash
         run: |
-          head_sha="${PR_HEAD_SHA:-$GITHUB_SHA}"
-          curl -fsSL \
-            "https://codeload.github.com/${GITHUB_REPOSITORY}/zip/${head_sha}" \
-            -o /tmp/env-setup.zip
-          checksum="$(sha256sum /tmp/env-setup.zip | awk '{print $1}')"
-          printf '{"commit":"%s","sha256":"%s"}\n' \
-            "$head_sha" \
-            "$checksum" \
-            > /tmp/archive-checksum.json
-          cat /tmp/archive-checksum.json
+          set -euo pipefail
+          version="$(tr -d '\r\n' < VERSION)"
+          archive="env-setup-${version}.zip"
 
-      - name: Upload immutable archive checksum
+          git archive \
+            --format=zip \
+            --prefix="env-setup-${version}/" \
+            --output="$archive" \
+            HEAD
+
+          archive_sha256="$(sha256sum "$archive" | awk '{print $1}')"
+          cp bootstrap.ps1 env-setup-bootstrap.ps1
+          bootstrap_sha256="$(sha256sum env-setup-bootstrap.ps1 | awk '{print $1}')"
+
+          python - "$version" "$archive" "$archive_sha256" <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          version, archive, checksum = sys.argv[1:]
+          metadata = {
+              "version": version,
+              "minimumWindowsBuild": 19041,
+              "archiveName": archive,
+              "archiveSha256": checksum,
+          }
+          pathlib.Path("env-setup-release.json").write_text(
+              json.dumps(metadata, indent=2) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+          printf '%s  %s\n' "$archive_sha256" "$archive" > SHA256SUMS
+          printf '%s  %s\n' "$bootstrap_sha256" env-setup-bootstrap.ps1 >> SHA256SUMS
+          python -m json.tool env-setup-release.json > /dev/null
+          sha256sum --check SHA256SUMS
+
+      - name: Upload release candidate assets
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: immutable-archive-checksum
-          path: /tmp/archive-checksum.json
+          name: release-candidate-assets
+          path: |
+            env-setup-*.zip
+            env-setup-bootstrap.ps1
+            env-setup-release.json
+            SHA256SUMS
           if-no-files-found: error
           retention-days: 7
 
