@@ -13,9 +13,9 @@ A resumable, observable, and idempotent Windows development-environment installe
 - safe resume and repair after failures, restarts, or interrupted installers;
 - read-only check and dry-run modes;
 - Windows, Git/GitHub, Visual Studio Code, WSL, Zsh, NVM, Node.js, cloud, and infrastructure tooling;
-- preflight doctor, status reporting, plan export, sanitized diagnostics, and immutable self-update;
+- preflight doctor, status reporting, plan export, sanitized diagnostics, and release-based self-update;
 - text, no-color, and JSON-lines output for humans and automation;
-- immutable bootstrap snapshots validated with SHA-256.
+- verified installation archives published as GitHub Release assets.
 
 ## Quick start
 
@@ -24,18 +24,21 @@ Open **Windows PowerShell as Administrator**.
 ```powershell
 Set-ExecutionPolicy -Scope Process Bypass
 
-$commit = "4d821a0080b467e01f4570f5f65a3c2a45fc54c2"
-$archiveSha256 = "1a45b9402918d934f511d9ee840b0d5e58426649b5db0f668c7003ce666ffa65"
-$bootstrap = Join-Path $env:TEMP "env-setup-bootstrap-$commit.ps1"
-
+$bootstrap = Join-Path $env:TEMP 'env-setup-bootstrap.ps1'
 Invoke-WebRequest `
-  -Uri "https://raw.githubusercontent.com/heronimfilho/env-setup/$commit/bootstrap.ps1" `
+  -Uri 'https://github.com/heronimfilho/env-setup/releases/latest/download/env-setup-bootstrap.ps1' `
   -OutFile $bootstrap
 
-& $bootstrap -Commit $commit -ArchiveSha256 $archiveSha256
+& $bootstrap
 ```
 
-The pinned values above are updated only after the corresponding snapshot passes the complete validation workflow.
+The bootstrap resolves the latest stable GitHub Release, downloads its metadata and ZIP asset, validates SHA-256, checks the minimum Windows build, and installs the published version.
+
+To install a specific published version:
+
+```powershell
+& $bootstrap -Version '0.4.0'
+```
 
 With Git already installed:
 
@@ -126,6 +129,16 @@ Persistent runtime data is stored outside the repository:
 
 `-Check` and `-DryRun` do not create or modify these files. See [`docs/recovery.md`](docs/recovery.md) for interruption, restart, repair, timeout, and diagnostics guidance.
 
+## Releases
+
+Published versions are available on the repository's **Releases** page. Every release includes:
+
+- the versioned `env-setup` ZIP;
+- `env-setup-bootstrap.ps1`;
+- `env-setup-release.json` with the minimum Windows build and archive checksum;
+- `SHA256SUMS`;
+- concise release notes from [`CHANGELOG.md`](CHANGELOG.md).
+
 ## Documentation
 
 - [Getting started](docs/getting-started.md)
@@ -142,7 +155,7 @@ Persistent runtime data is stored outside the repository:
 
 ## Security
 
-Review scripts before executing system-level automation. Bootstrap and update archives are pinned to immutable commits and validated with SHA-256. Secrets, tokens, passwords, passphrases, and private keys are not persisted. Diagnostic bundles are sanitized and should still be reviewed before sharing.
+Review scripts before executing system-level automation. Installation and update archives are downloaded from published GitHub Releases and validated against release metadata before extraction. Secrets, tokens, passwords, passphrases, and private keys are not persisted. Diagnostic bundles are sanitized and should still be reviewed before sharing.
 
 ## License
 
